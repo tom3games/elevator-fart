@@ -171,6 +171,7 @@ window.HS = {
       snuckL: 'バレずに', badL: 'バレた', blameL: 'なすりつけ', unitN: '{N}発', times: '{N}回', ruseOk: '成功{N}',
       paxT: '今日の乗客', paxN: '{N}人', victim: '一番の被害者', victimNone: 'なし',
       again: 'もう一回', save: '画像を保存', toTitle: 'タイトル', xPost: 'Xでポスト',
+      more: 'ほかのバカゲーも遊ぶ', moreT: 'ほかのバカゲー', close: '閉じる',
       saved: '保存しました', drum: '集計中…',
       cardTitle: '密室おなら選手権', cardFoot: 'tom3games.github.io/elevator-fart', cardSub: 'ELEVATOR FART', cardFx: 'ブッ!!',
       share: 'エレベーターで{P}点「{R}」{F}階まで到達 バレずに{N}発 最大{D}dB #密室おなら選手権',
@@ -210,10 +211,18 @@ window.HS = {
       snuckL: 'Unnoticed', badL: 'Busted', blameL: 'Blamed', unitN: '{N}', times: '{N}x', ruseOk: '{N} worked',
       paxT: 'Today\'s riders', paxN: '{N}', victim: 'Biggest victim', victimNone: 'none',
       again: 'Again', save: 'Save image', toTitle: 'Title', xPost: 'Post on X',
+      more: 'More silly games', moreT: 'More silly games', close: 'Close',
       saved: 'Saved', drum: 'Counting...',
       cardTitle: 'ELEVATOR FART', cardFoot: 'tom3games.github.io/elevator-fart', cardSub: 'FART NINJA CERTIFICATE', cardFx: 'PFFT!!',
       share: 'Scored {P} in a sealed elevator "{R}" reached floor {F}, {N} unnoticed farts, loudest {D}dB #ElevatorFart',
       extra: { blame: 'The one you blamed is still confused to this day.' },
     },
   },
+  // 結果画面・タイトルから行けるほかのバカゲー（名前は各ゲームの title、一言は og:description から）
+  others: [
+    { url: 'https://tom3games.github.io/sneeze-quiet/', ja: 'くしゃみ我慢選手権', en: 'HOLD THAT SNEEZE', dj: 'くしゃみは大きな音にかぶせて出せ', de: 'Sneeze under the loud noises' },
+    { url: 'https://tom3games.github.io/onara-jinro/', ja: 'おなら人狼', en: 'FART WOLF', dj: 'こたつでこっそりおなら。指されなければ勝ち', de: 'Fart under the kotatsu. Don\'t get caught' },
+    { url: 'https://tom3games.github.io/nod-master/', ja: 'うなずきマスター', en: 'NOD MASTER', dj: '上司の長〜い話を、うなずき切れ', de: 'Nod through the boss\'s endless talk' },
+    { url: 'https://tom3games.github.io/sushi-tower/', ja: '回転寿司の皿タワー', en: 'SUSHI PLATE TOWER', dj: '食べた皿を、天井まで積み上げろ', de: 'Stack your plates to the ceiling' },
+  ],
 }

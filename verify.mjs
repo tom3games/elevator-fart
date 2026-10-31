@@ -1,6 +1,7 @@
 // 密室おなら選手権の検証。node verify.mjs（FPS=1 で GPU 描画の fps も測る）
 // 遊び: 1回の乗車で登り続け、おならボタン3種（すかしっぺ・ぷっ・ブボボボッ）で点を稼ぐ。3回バレたら降ろされる
 import { chromium, webkit } from 'playwright'
+import { launch } from './_mute.mjs'
 import { spawn } from 'node:child_process'
 import { mkdirSync, readFileSync } from 'node:fs'
 const ROOT = import.meta.dirname
@@ -81,7 +82,7 @@ const BOT = readFileSync(ROOT + '/bot.js', 'utf8').replace(/^\/\/.*\n/gm, '')
 
 const PUB = 'https://tom3games.github.io/elevator-fart/'
 const GAZE_ME = 2.4
-const browser = await chromium.launch()
+const browser = await launch(chromium)
 const p = await open(browser)
 const run = (fn, arg) => p.evaluate(fn, arg)
 const botRun = (mode, seed, bseed) => p.evaluate(([b, m, s, bs]) => { hs.dbg.pause(); hs.dbg.seed(s); hs.start(); return eval(b)(m, bs) }, [BOT, mode, seed, bseed])
@@ -552,17 +553,17 @@ await t('英語: Post on X も英語の点数・ハッシュタグで開く', as
   const w = await run(() => { const r = hs.S.result; return ['Scored ' + r.score, r.rank.t.en, 'reached floor ' + r.floor] })
   const r = await xCheck(p, 'hs', w, '#ElevatorFart', PUB); await run(() => hs.setLang('ja')); expect(r.label === 'Post on X', r.label); return r
 })
-await t('音: 鳴らしてもエラーが出ず、出来事の音・おならが鳴る（ボタンをクリックで出す）', async () => {
+await t('音: 鳴らす関数がエラーなく呼ばれる（出来事の音・おなら。テスト中は無音）', async () => {
   await run(() => hs.toTitle()); await p.click('#bStart'); await p.click('#bGo')
   await run(() => { hs.dbg.pause(); hs.dbg.step(150); hs.dbg.toPeak(0.3); hs.dbg.render() })
   await p.click('#f_bubo')
   const r = await run(() => { hs.dbg.step(30); return { state: hs.Snd.ctx && hs.Snd.ctx.state, played: Object.keys(hs.Snd.played), rec: hs.S.rec.map(x => x.id + ':' + x.rating) } })
   await p.waitForTimeout(500)
-  const lv = await run(() => hs.Snd.level())
+  // テスト中は実際には鳴らさない（_mute.mjs で AudioContext は止めたまま）。鳴らす関数が呼ばれたかで確かめる
   await run(() => hs.Snd.setMute(true)); await p.waitForTimeout(150)
   const muted = await run(() => hs.Snd.master.gain.value)
   await run(() => hs.Snd.setMute(false))
-  expect(r.played.includes('ev:chime') && r.played.includes('fart') && r.rec.length === 1 && /bubo:(perfect|safe)/.test(r.rec[0]) && lv > 0.001 && muted === 0 && !p.errs.length, JSON.stringify({ ...r, lv, muted, errs: p.errs })); return { played: r.played.length, rec: r.rec, level: +lv.toFixed(3) }
+  expect(r.state === 'suspended' && r.played.includes('ev:chime') && r.played.includes('fart') && r.rec.length === 1 && /bubo:(perfect|safe)/.test(r.rec[0]) && muted === 0 && !p.errs.length, JSON.stringify({ ...r, muted, errs: p.errs })); return { played: r.played.length, rec: r.rec, ctx: r.state }
 })
 await t('PC: 1・2・3 キーでも出せる', async () => {
   await begin(26); await quiet(['coworker'])
@@ -573,6 +574,26 @@ await t('PC: 1・2・3 キーでも出せる', async () => {
 await t('全部の出来事の音が鳴る（9種）＋消臭・ボタン連打', async () => {
   const r = await run(() => { for (const e of ['chime', 'phone', 'shake', 'laugh', 'baby', 'bark', 'cart', 'giggle', 'music']) hs.Snd.event(e, 1, 0.5); hs.Snd.sfx('spray'); hs.Snd.sfx('mash'); return Object.keys(hs.Snd.played).filter(k => k.startsWith('ev:')).length })
   expect(r === 9 && !p.errs.length, r + ' ' + p.errs.join('|')); return r
+})
+await t('ほかのバカゲー: 結果とタイトルの入口から一覧が開き、4本とも新しいタブ（noopener）で各ゲームへ', async () => {
+  const want = ['sneeze-quiet', 'onara-jinro', 'nod-master', 'sushi-tower'].map(s => `https://tom3games.github.io/${s}/`)
+  const list = () => run(() => [...document.querySelectorAll('#moreL a')].map(a => ({ href: a.href, target: a.target, rel: a.rel, img: a.querySelector('img').getAttribute('src'), name: a.querySelector('b').textContent, sub: a.querySelector('span').textContent })))
+  const okList = (L, ja) => L.length === 4 && L.every((a, i) => a.href === want[i] && a.target === '_blank' && /noopener/.test(a.rel) && a.img === want[i] + 'og.png' && a.name && a.sub && /[぀-ヿ一-鿿]/.test(a.name + a.sub) === ja)
+  await run(() => { hs.toResult(); hs.finishReveal() })
+  expect(await p.isVisible('#bMore') && await p.isVisible('#bX'), '結果の入口が見えない')
+  await p.click('#bMore'); expect(await p.isVisible('#moreBox'), '一覧が開かない')
+  const ja = await list(); expect(okList(ja, true), JSON.stringify(ja))
+  await p.click('#bMoreX'); expect(!(await p.isVisible('#moreBox')), '×で閉じない')
+  await p.click('#bMore'); await p.mouse.click(3, 3); expect(!(await p.isVisible('#moreBox')), '外側タップで閉じない')
+  await run(() => hs.setLang('en')); await p.click('#bMore'); const en = await list(); await p.keyboard.press('Escape')
+  expect(okList(en, false) && en[0].name === 'HOLD THAT SNEEZE' && !(await p.isVisible('#moreBox')), JSON.stringify(en))
+  await run(() => { hs.setLang('ja'); hs.toTitle() }); await p.click('#bMoreT'); const tl = await list(); expect(okList(tl, true), 'タイトル ' + JSON.stringify(tl))
+  // 実際にクリックすると新しいタブが開く（遷移先はネットに出ないよう止める）
+  await p.context().route('https://tom3games.github.io/**/', r => r.fulfill({ body: '<title>x</title>', contentType: 'text/html' }))
+  const [np] = await Promise.all([p.context().waitForEvent('page'), p.click('#moreL a >> nth=2')])
+  const u = np.url(); await np.close(); await p.context().unroute('https://tom3games.github.io/**/')
+  await p.click('#bMoreX')
+  expect(u === want[2] && p.url().startsWith(URL0), u + ' / ' + p.url()); return { ja: ja.map(a => a.name), en: en.map(a => a.name), opened: u }
 })
 await t('通しの最後までコンソールエラーなし', async () => { expect(p.errs.length === 0, p.errs.join('|')) })
 await p.close()
@@ -610,7 +631,7 @@ for (const [w, h, name0, en] of [...SIZES, [360, 640, 'small', 1], [667, 375, 'l
 await browser.close()
 
 // ---- WebKit（iPhone 相当）でタッチの通し
-const wb = await webkit.launch(), wp = await open(wb, { isMobile: true, hasTouch: true, deviceScaleFactor: 2 })
+const wb = await launch(webkit), wp = await open(wb, { isMobile: true, hasTouch: true, deviceScaleFactor: 2 })
 await t('WebKit: 2本指の touchmove を止める', async () => {
   const r = await wp.evaluate(() => { const e = new Event('touchmove', { cancelable: true, bubbles: true }); Object.defineProperty(e, 'touches', { value: [{}, {}] }); document.body.dispatchEvent(e); return e.defaultPrevented })
   expect(r, r)
@@ -633,7 +654,7 @@ await wb.close()
 
 // ---- fps（GPU 描画で実時間に遊ばせて測る）
 if (process.env.FPS) {
-  const gb = await chromium.launch({ channel: 'chromium', args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] })
+  const gb = await launch(chromium, { channel: 'chromium', args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] })
   for (const [w, h] of [[390, 844], [1440, 900]]) {
     const g = await open(gb, { viewport: { width: w, height: h } })
     await g.evaluate(() => { hs.start(); hs.beginCount() }); await g.waitForTimeout(6000)

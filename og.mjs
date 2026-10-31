@@ -1,11 +1,12 @@
 // SNS用サムネ og.png（1200x630）。node og.mjs
 // 満員エレベーターで暴発し、全員が振り向いて「くさっ！！誰！？」の瞬間を左に、右にタイトルと一言
 import { chromium } from 'playwright'
+import { launch } from './_mute.mjs'
 import { spawn } from 'node:child_process'
 const ROOT = import.meta.dirname
 const server = spawn(process.execPath, ['server.mjs'], { cwd: ROOT, env: { ...process.env, PORT: '5419' } })
 await new Promise(r => setTimeout(r, 400))
-const b = await chromium.launch()
+const b = await launch(chromium)
 const p = await b.newPage({ viewport: { width: 1200, height: 630 }, locale: 'ja-JP' })
 await p.goto('http://localhost:5419/'); await p.waitForFunction(() => window.__hsReady)
 await p.evaluate(() => document.fonts.ready)

@@ -224,6 +224,27 @@ html[lang=ja] .rank,html[lang=ja] .stRow div b,html[lang=ja] .stamp,html[lang=ja
 @media (min-width:900px) and (min-height:700px){
   .hudTop{padding-top:16px;padding-left:16px}
 }
+/* ほかのバカゲー（結果・タイトルの入口と一覧） */
+.more{display:flex;align-items:center;justify-content:center;gap:6px;align-self:center;min-height:40px;padding:0 14px;border:0;border-radius:99px;background:rgba(27,22,32,.6);color:var(--paper);font-weight:900;font-size:14px;cursor:pointer;text-decoration:underline;text-underline-offset:3px;white-space:nowrap}
+.more svg{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+#moreBox{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));background:rgba(20,10,25,.7)}
+.moreP{width:min(560px,100%);max-height:100%;overflow:auto;background:var(--paper);color:var(--ink);border:3px solid var(--ink);border-radius:20px;box-shadow:0 7px 0 var(--ink);padding:8px 12px 12px;animation:popIn .2s cubic-bezier(.3,1.4,.5,1)}
+.moreHd{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.moreHd h2{font-family:var(--disp);font-weight:400;font-size:19px;padding-left:4px}
+html[lang=ja] .moreHd h2{font-family:"Zen Maru Gothic",var(--disp);font-weight:900}
+.moreX{flex:none;width:44px;height:44px;border:0;background:none;color:var(--ink);cursor:pointer;display:flex;align-items:center;justify-content:center}
+.moreX svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:3;stroke-linecap:round}
+.moreL{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.moreL a{display:flex;flex-direction:column;min-width:0;background:#fff;color:var(--ink);text-decoration:none;border:2px solid var(--ink);border-radius:12px;overflow:hidden;box-shadow:0 3px 0 var(--ink)}
+.moreL a:active{transform:translateY(2px);box-shadow:0 1px 0 var(--ink)}
+.moreL img{display:block;width:100%;height:auto;aspect-ratio:1200/630;object-fit:cover;background:var(--paper-dk);border-bottom:2px solid var(--ink)}
+.moreL b{display:block;padding:5px 8px 0;font-size:14px;font-weight:900;line-height:1.3}
+.moreL span{display:block;padding:2px 8px 7px;font-size:11px;font-weight:700;line-height:1.4;color:#5a4f5e}
+@media (max-height:560px) and (orientation:landscape){
+  .moreP{width:min(820px,100%)}
+  .moreL{grid-template-columns:repeat(4,1fr);gap:8px}
+  .more{min-height:36px;font-size:13px}
+}
 #boot-err{position:fixed;inset:auto 8px 8px 8px;z-index:99;background:#fff;color:#b00;font:12px/1.4 monospace;white-space:pre-wrap;padding:10px;border-radius:8px}
 </style>
 <script type="importmap">{"imports":{"three":"./vendor/three.module.js"}}</script>
@@ -247,6 +268,7 @@ html[lang=ja] .rank,html[lang=ja] .stRow div b,html[lang=ja] .stamp,html[lang=ja
     <div class="mc"><svg class="face" viewBox="0 0 48 48" data-face="mc"></svg><div class="bubble"><small data-t="mcName"></small><span data-t="lead"></span></div></div>
     <button class="btn red" id="bStart" type="button"><svg viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z" fill="currentColor"/></svg><span data-t="start"></span></button>
     <button class="btn ghost" id="bHow" type="button" data-t="how"></button>
+    <button class="more" id="bMoreT" type="button"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7M18 14l3.5 3.5L18 21"/></svg><span data-t="more"></span></button>
   </div>
 </main>
 
@@ -299,9 +321,17 @@ html[lang=ja] .rank,html[lang=ja] .stRow div b,html[lang=ja] .stamp,html[lang=ja
       <div class="mc reveal" id="rMc"><svg class="face" viewBox="0 0 48 48" data-face="mc"></svg><div class="bubble"><small data-t="mcName"></small><span id="rCmt"></span></div></div>
       <div class="row reveal" id="rBtns1"><button class="btn red" id="bAgain" type="button" data-t="again"></button><button class="btn ghost" id="bTitle" type="button" data-t="toTitle"></button></div>
       <div class="row reveal" id="rBtns2"><button class="btn yel" id="bSave" type="button"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 19h14"/></svg><span data-t="save"></span></button><button class="btn xpost" id="bX" type="button"><svg class="xlogo" viewBox="0 0 24 24" aria-hidden="true"><path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"/></svg><span data-t="xPost"></span></button></div>
+      <button class="more reveal" id="bMore" type="button"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7M18 14l3.5 3.5L18 21"/></svg><span data-t="more"></span></button>
     </div>
   </div>
 </main>
+
+<div id="moreBox" hidden role="dialog" aria-modal="true" aria-labelledby="moreH">
+  <div class="moreP">
+    <div class="moreHd"><h2 id="moreH" data-t="moreT"></h2><button type="button" id="bMoreX" class="moreX"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <div class="moreL" id="moreL"></div>
+  </div>
+</div>
 
 <script>
 (function(){
@@ -326,7 +356,7 @@ html[lang=ja] .rank,html[lang=ja] .stRow div b,html[lang=ja] .stamp,html[lang=ja
   },6000);
 })();
 </script>
-<script src="data.js?v=9"></script>
-<script type="module" src="game.js?v=9"></script>
+<script src="data.js?v=10"></script>
+<script type="module" src="game.js?v=10"></script>
 </body>
 </html>

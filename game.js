@@ -754,7 +754,7 @@ for (let i = 0; i < 8; i++) { const m = box(0.01, 0.01, 0.5, new THREE.MeshBasic
 
 // ---------- 画面
 const views = ['vTitle', 'vHow', 'vPlay', 'vResult']
-function show(id) { for (const v of views) $('#' + v).hidden = v !== id }
+function show(id) { for (const v of views) $('#' + v).hidden = v !== id; $('#moreBox').hidden = true }
 const ICON = {
   hold: '<path d="M9 11V5a2 2 0 0 1 4 0v6M13 10V8a2 2 0 0 1 4 0v5c0 5-3 8-7 8s-6-3-6-6v-3a2 2 0 0 1 4 0"/>',
   ear: '<path d="M7 9a5 5 0 0 1 10 0c0 3-3 4-3 7a3 3 0 0 1-6 0"/><path d="M19 5a9 9 0 0 1 0 10M21.5 3a12 12 0 0 1 0 14"/>',
@@ -796,6 +796,8 @@ function applyLang() {
   $('#howSteps').innerHTML = T.howSteps.map(([ic, s]) => `<div class="step">${svg(ic)}<span>${s.replace('{HOLD}', H).replace('{REL}', R).replace('{TAP}', TP)}</span></div>`).join('')
   for (const f of D.farts) { const b = $('#f_' + f.id); b.querySelector('.fn').textContent = f[S.lang]; b.querySelector('.fp').textContent = T.pt.replace('{N}', f.pts); b.setAttribute('aria-label', f[S.lang]) }
   $('#bBlame .rl').textContent = T.ruse.blame
+  $('#bMoreX').setAttribute('aria-label', T.close)
+  if (!$('#moreBox').hidden) fillMore()
   lastScore = -1
   if (S.mode === 'intro') fillIntro()
   if (S.mode === 'result' && S.result) fillResult(true)
@@ -1229,7 +1231,7 @@ function updateReveal(dt) {
   step(1, 2.6, () => { $('#rStamp').classList.add('on'); $('#rRank').classList.add('on'); $('#rFloor').classList.add('on'); Snd.sfx('stamp'); Snd.sfx(S.mood === 'proud' ? 'fanfare' : 'wahwah'); Snd.setTrack(S.mood === 'proud' ? 'happy' : 'sad'); S.shake = 0.03 })
   step(2, 3.2, () => { $('#rDb').classList.add('on'); Snd.sfx('boom') })
   step(3, 3.7, () => { $('#rStages').classList.add('on'); $('#rPax').classList.add('on'); Snd.sfx('tap') })
-  step(4, 4.1, () => { for (const id of ['#rMc', '#rBtns1', '#rBtns2']) $(id).classList.add('on') })
+  step(4, 4.1, () => { for (const id of ['#rMc', '#rBtns1', '#rBtns2', '#bMore']) $(id).classList.add('on') })
 }
 function finishReveal() { if (S.mode !== 'result') return; S.resT = Math.max(S.resT, 4.2); updateReveal(0) }
 // ---------- 結果カード画像
@@ -1536,6 +1538,19 @@ $('#bAgain').onclick = () => { Snd.sfx('tap'); startRun() }
 $('#bSave').onclick = () => saveCard()
 $('#bX').onclick = () => openX()
 $('#bTitle').onclick = () => toTitle()
+// ほかのバカゲー（新しいタブで開く。サムネは開いた時に初めて読む）
+const esc = x => String(x).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+function fillMore() {
+  const L = S.lang
+  $('#moreL').innerHTML = D.others.map(g => `<a href="${esc(g.url)}" target="_blank" rel="noopener"><img src="${esc(g.url)}og.png" alt="" width="1200" height="630" decoding="async"><b>${esc(g[L])}</b><span>${esc(L === 'ja' ? g.dj : g.de)}</span></a>`).join('')
+}
+function openMore() { Snd.init(); Snd.sfx('tap'); fillMore(); $('#moreBox').hidden = false; $('#bMoreX').focus({ preventScroll: true }) }
+function closeMore() { if ($('#moreBox').hidden) return; $('#moreBox').hidden = true; Snd.sfx('tap') }
+$('#bMore').onclick = openMore
+$('#bMoreT').onclick = openMore
+$('#bMoreX').onclick = closeMore
+$('#moreBox').addEventListener('click', e => { if (e.target === e.currentTarget) closeMore() })
+window.addEventListener('keydown', e => { if (e.code === 'Escape') closeMore() })
 $('#vResult').addEventListener('pointerdown', e => { if (!e.target.closest('button')) finishReveal() })
 $('#bLang').onclick = () => { S.lang = S.lang === 'ja' ? 'en' : 'ja'; store.set('hs.lang', S.lang); applyLang(); Snd.sfx('tap') }
 $('#bMute').onclick = () => { Snd.init(); Snd.setMute(!Snd.muted); syncMute() }
@@ -1560,6 +1575,7 @@ window.hs = {
   level: () => S.level, aboard, sniffMult, coverNow, diff,
   cardDataURL: cardURL,
   setLang(l) { S.lang = l; applyLang() },
+  openMore, closeMore,
   dbg: {
     pause(b = true) { S.dbgPause = b; acc = 0; last = performance.now() },
     step(n = 1) { for (let i = 0; i < n; i++) step(); updateHud() },
