@@ -1125,16 +1125,16 @@ function updateReveal(dt) {
 function finishReveal() { if (S.mode !== 'result') return; S.resT = Math.max(S.resT, 4.2); updateReveal(0) }
 // ---------- 結果カード画像
 function roundRect(c, x, y, w, h, r) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath() }
-function fitText(c, s, maxW, size, font) { let f = size; c.font = `${f}px ${font}`; while (c.measureText(s).width > maxW && f > 14) { f -= 2; c.font = `${f}px ${font}` } return f }
+function fitText(c, s, maxW, size, font, wt = '') { let f = size; c.font = `${wt}${f}px ${font}`; while (c.measureText(s).width > maxW && f > 14) { f -= 2; c.font = `${wt}${f}px ${font}` } return f }
 function drawCard() {
   const W = 1080, H = 1350, c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d')
-  const T = TT(), r = S.result, L = S.lang, disp = '"Dela Gothic One", "Hiragino Sans", sans-serif', round = '"Zen Maru Gothic", "Hiragino Maru Gothic ProN", sans-serif'
+  const T = TT(), r = S.result, L = S.lang, disp = '"Dela Gothic One", "Hiragino Sans", sans-serif', round = '"Zen Maru Gothic", "Hiragino Maru Gothic ProN", sans-serif', hd = L === 'ja' ? round : disp, hw = L === 'ja' ? '900 ' : ''
   const bold = (s, maxW, size, font) => { fitText(x, s, maxW, size, font); x.font = x.font.replace(/^(\d+px)/, '900 $1') }
   x.fillStyle = r.rank.col; x.fillRect(0, 0, W, H)
   x.fillStyle = 'rgba(255,255,255,.08)'; for (let i = -H; i < W; i += 60) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i + 30, 0); x.lineTo(i + 30 + H, H); x.lineTo(i + H, H); x.fill() }
   roundRect(x, 50, 50, W - 100, H - 100, 44); x.fillStyle = '#fff8ec'; x.fill(); x.lineWidth = 10; x.strokeStyle = '#1b1620'; x.stroke()
   x.textAlign = 'center'; x.textBaseline = 'alphabetic'; x.fillStyle = '#1b1620'
-  fitText(x, T.cardTitle, W - 200, 70, disp); x.fillText(T.cardTitle, W / 2, 155)
+  fitText(x, T.cardTitle, W - 200, 70, hd, hw); x.fillText(T.cardTitle, W / 2, 155)
   x.font = `30px ${disp}`; x.fillStyle = r.rank.col; x.fillText(T.cardSub, W / 2, 198)
   const ph = $('#rPhoto'), px = 110, py = 232, ps = 400
   x.save(); roundRect(x, px, py, ps, ps, 30); x.clip(); x.drawImage(ph, px, py, ps, ps); x.restore()
@@ -1147,9 +1147,9 @@ function drawCard() {
     const sx = 765 - (nw + pw + 8) / 2; x.textAlign = 'left'; x.fillStyle = '#ff3d2e'; x.font = `${f}px ${disp}`; x.fillText(num, sx, 470); x.font = `${f * 0.32}px ${disp}`; x.fillText(T.scoreU, sx + nw + 8, 470); x.textAlign = 'center' }
   // 何階まで行けたか（添える）
   const ft = r.roof ? T.floorTop : T.floorTo.replace('{F}', r.floor); x.fillStyle = '#1b1620'; bold(ft, 380, 36, round); x.fillText(ft, 765, 530)
-  x.save(); x.translate(880, 600); x.rotate(-0.25); x.beginPath(); x.arc(0, 0, 70, 0, 7); x.fillStyle = 'rgba(255,248,236,.9)'; x.fill(); x.lineWidth = 9; x.strokeStyle = '#ff3d2e'; x.stroke(); x.fillStyle = '#ff3d2e'; x.textBaseline = 'middle'
-  const sl = r.rank.st[L].split('\n'); x.font = `${sl.length > 1 ? 36 : 48}px ${disp}`; sl.forEach((s, i) => x.fillText(s, 0, (i - (sl.length - 1) / 2) * 40)); x.restore(); x.textBaseline = 'alphabetic'
-  x.fillStyle = r.rank.col; fitText(x, r.rank.t[L], W - 200, 62, disp); x.fillText(r.rank.t[L], W / 2, 705)
+  x.save(); x.translate(482, 566); x.rotate(-0.25); x.beginPath(); x.arc(0, 0, 66, 0, 7); x.fillStyle = 'rgba(255,248,236,.9)'; x.fill(); x.lineWidth = 9; x.strokeStyle = '#ff3d2e'; x.stroke(); x.fillStyle = '#ff3d2e'; x.textBaseline = 'middle'
+  const sl = r.rank.st[L].split('\n'); x.font = `${hw}${sl.length > 1 ? 36 : 48}px ${hd}`; sl.forEach((s, i) => x.fillText(s, 0, (i - (sl.length - 1) / 2) * 40)); x.restore(); x.textBaseline = 'alphabetic'
+  x.fillStyle = r.rank.col; fitText(x, r.rank.t[L], W - 200, 62, hd, hw); x.fillText(r.rank.t[L], W / 2, 705)
   roundRect(x, 110, 735, W - 220, 190, 26); x.fillStyle = '#1b1620'; x.fill()
   x.fillStyle = '#ffd21f'; x.font = `900 30px ${round}`; x.fillText(T.maxDb, W / 2, 782)
   x.fillStyle = '#fff8ec'; x.font = `96px ${disp}`; x.fillText(r.db ? r.db.toFixed(1) + ' dB' : '-', W / 2, 874)
@@ -1158,12 +1158,12 @@ function drawCard() {
   statText(r).forEach(([a, b], i) => {
     const bw = (W - 260) / 3, bx = 110 + i * (bw + 20), by = 950
     roundRect(x, bx, by, bw, 120, 20); x.fillStyle = i === 1 && r.bad ? '#ffe1dc' : '#fff'; x.fill(); x.lineWidth = 5; x.strokeStyle = '#1b1620'; x.stroke()
-    x.fillStyle = '#1b1620'; bold(a, bw - 30, 28, round); x.fillText(a, bx + bw / 2, by + 44); fitText(x, b, bw - 24, 44, disp); x.fillText(b, bx + bw / 2, by + 98)
+    x.fillStyle = '#1b1620'; bold(a, bw - 30, 28, round); x.fillText(a, bx + bw / 2, by + 44); fitText(x, b, bw - 24, 44, hd, hw); x.fillText(b, bx + bw / 2, by + 98)
   })
   // 今日の乗客・被害者
   const [pa, pb] = paxText(r)
   x.fillStyle = '#1b1620'; bold(pa, W - 240, 28, round); x.fillText(pa, W / 2, 1130)
-  x.fillStyle = '#a8170d'; fitText(x, pb, W - 240, 34, disp); x.fillText(pb, W / 2, 1182)
+  x.fillStyle = '#a8170d'; fitText(x, pb, W - 240, 34, hd, hw); x.fillText(pb, W / 2, 1182)
   x.fillStyle = '#1b1620'; x.font = `900 28px ${round}`; x.fillText(T.cardFoot, W / 2, 1262)
   return c
 }
