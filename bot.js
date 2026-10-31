@@ -1,6 +1,6 @@
 // ページの中で動かすボット（verify と同じもの）
-// skilled=光ったボタンを見て押す人（反応0.12〜0.25秒）。R付きはピンチで なすりつけ も使う
-// aim=予告を見て山を読んで ブボボボッ を押す人（ひっかけに3割かかる）／spam=溜まったら全部押す／suka=すかしっぺだけ／never=何もしない
+// skilled=光ったボタンを見て押す人（反応0.12〜0.25秒）。すかしっぺは空気が落ち着いている時だけ・にらまれている間は出さない。R付きはバレた直後に なすりつけ で取り消しを狙う
+// aim=予告を見て山を読んで ブボボボッ を押す人（ひっかけに3割かかる）／spam=溜まったら全部押す／suka=すかしっぺ連打／sukaWait=すかしっぺ連打だが、にらまれている間だけ止める／never=何もしない
 (mode, bseed = 1) => {
   hs.dbg.pause(); const S = hs.S; let guard = 0
   let a = bseed >>> 0; const R = () => { a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296 }
@@ -9,18 +9,23 @@
   while (S.mode !== 'result' && guard++ < 60 * 900) {
     if (S.mode === 'intro') hs.beginCount()
     if (S.mode === 'play') {
-      if (mode.startsWith('skilled')) {
-        for (const k of ['bubo', 'pu']) {
+      // 上手い人は、にらまれている間は出さずに耐える。ざわざわし始めたら ブボボボッ だけ。すかしっぺは空気が落ち着いて煙も薄い時だけ（匂いの具合を見る）
+      const gz = S.hunt && S.hunt.to === 'me' && S.hunt.t > 0.3
+      if (mode.startsWith('skilled') && !gz) {
+        for (const k of S.air === 0 ? ['bubo', 'pu'] : ['bubo']) {
           if (hs.okNow(k) && hs.canFart(k)) { seen[k] = (seen[k] ?? 0) + 1 / 60; if (seen[k] > (seen[k + 'r'] ??= react())) { hs.fart(k); seen[k] = 0; seen[k + 'r'] = undefined } } else seen[k] = 0
         }
-        if (S.door > 0.5 && S.sniff < 0.25 && hs.canFart('suka')) hs.fart('suka')
-        if (mode.endsWith('R') && hs.pinch()) hs.useRuse('blame')
+        if (S.air === 0 && S.smell < 0.35 && hs.canFart('suka')) hs.fart('suka')
+      }
+      if (mode.startsWith('skilled')) {
+        if (mode.endsWith('R') && hs.pinch() && S.lastBad) hs.useRuse('blame')
       } else if (mode === 'aim') {
         for (const e of S.evs) if (e.off === undefined) e.off = (e.fake && R() > 0.3) ? 99 : e.peak / 2 - 0.12 + gauss() * 0.09
         const e = S.evs.find(e => !e.botDone && S.st >= e.at + e.off)
         if (e) { e.botDone = true; hs.fart('bubo') }
       } else if (mode === 'spam') { for (const k of ['bubo', 'pu', 'suka']) if (hs.canFart(k)) hs.fart(k) }
       else if (mode === 'suka') { if (hs.canFart('suka')) hs.fart('suka') }
+      else if (mode === 'sukaWait') { if (!gz && hs.canFart('suka')) hs.fart('suka') }
     }
     hs.dbg.step(1)
   }

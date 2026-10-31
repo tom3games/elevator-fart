@@ -3,3 +3,4 @@ node_modules
 shots/
 _snap.mjs
 _dist.mjs
+_part_run.mjs

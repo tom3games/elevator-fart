@@ -22,7 +22,8 @@ const S = {
   later: [], rec: [], maxDb: 0, photo: false, capT: -1, doCap: false,
   dbgPause: false, fps: 0, resT: 0, result: null, mood: '',
   // 匂い・乗客・誤魔化し
-  smell: 0, sniff: 0, sniffStep: 0, smellBusts: 0, pax: [], rode: [], floor: 1, floorF: 1, door: 0, stop: null,
+  // air=空気の段階（0=平常 1=ざわざわ 2=犯人探し）、hunt=犯人探しの視線（from が to を疑っている。to==='me' なら自分）
+  smell: 0, sniff: 0, air: 0, hunt: null, zawaT: 0, smellBusts: 0, pax: [], rode: [], floor: 1, floorF: 1, door: 0, stop: null,
   ruseLeft: {}, ruseLog: [], lastBad: null, exitT: 0,
 }
 S.rand = mulberry(S.seed)
@@ -132,15 +133,24 @@ const Snd = {
   },
   // プレイ: のんきなエレベーター音楽（ボサノバ）
   p_quiet(i, t) {
-    const bar = Math.floor(i / 16) % 4, s = i % 16
+    const bar = Math.floor(i / 16) % 4, s = i % 16, ten = this.tense || 0
     const ch = [[65, 69, 72, 76], [64, 67, 71, 74], [62, 65, 69, 72], [67, 71, 74, 77]][bar], root = [41, 40, 38, 43][bar]
+    // 匂いがたまると不穏に: ざわざわ=低い半音のうなりとひそひそ声、犯人探し=心臓の音でメロディが消える
+    if (ten >= 1) {
+      if (s === 0) this.tone(this.mtof(root + 13), t, 1.1, 'sawtooth', 0.012, this.bgm)
+      if ((s === 5 || s === 13) && Math.random() < 0.6) this.noise(t, 0.12, 0.03, 3200, 'bandpass', this.bgm, 4)
+    }
+    if (ten >= 2) {
+      if (s === 0 || s === 3 || s === 8 || s === 11) this.tone(s % 8 === 0 ? 62 : 55, t, 0.14, 'sine', 0.42, this.bgm, 40)
+      return
+    }
     if (s === 0 || s === 10) this.tone(this.mtof(root), t, 0.3, 'sine', 0.22, this.bgm)
     if (s === 6 || s === 14) this.tone(this.mtof(root + 7), t, 0.22, 'sine', 0.14, this.bgm)
     if ([0, 3, 6, 10, 12].includes(s)) for (const n of ch) this.tone(this.mtof(n), t, 0.16, 'triangle', 0.018, this.bgm)
     if (s % 2 === 0) this.noise(t, 0.02, 0.012, 6000, 'highpass', this.bgm)
     const mel = [[76, -1, -1, 77, -1, 76, -1, -1, 72, -1, -1, -1, 74, -1, -1, -1], [74, -1, -1, 72, -1, 71, -1, -1, 67, -1, -1, -1, -1, -1, -1, -1],
       [72, -1, -1, 74, -1, 76, -1, -1, 77, -1, 76, -1, 74, -1, -1, -1], [74, -1, -1, -1, 71, -1, -1, -1, 67, -1, 69, -1, 71, -1, -1, -1]][bar]
-    if (mel[s] > 0) this.tone(this.mtof(mel[s]), t, 0.3, 'sine', 0.035, this.bgm)
+    if (mel[s] > 0) this.tone(this.mtof(mel[s]), t, 0.3, 'sine', ten >= 1 ? 0.015 : 0.035, this.bgm)
   },
   p_happy(i, t) {
     const bar = Math.floor(i / 16) % 4, s = i % 16, root = [48, 45, 41, 43][bar]
@@ -255,6 +265,8 @@ const Snd = {
       case 'hum': this.tone(140, t, 0.45, 'triangle', 0.07, null, 175); this.tone(146, t, 0.45, 'sine', 0.05, null, 150); break
       case 'scratch': this.tone(900, t, 0.14, 'sawtooth', 0.09, null, 180); this.noise(t, 0.14, 0.2, 1500, 'bandpass', null, 3); this.tone(250, t + 0.15, 0.12, 'sawtooth', 0.08, null, 800); break
       case 'gasp': for (let k = 0; k < 7; k++) { const f = 380 + Math.random() * 320; this.tone(f, t + Math.random() * 0.1, 0.28, 'sawtooth', 0.025, null, f * 0.62) } this.noise(t + 0.1, 0.8, 0.12, 700, 'bandpass', null, 0.8); break
+      case 'whisper': for (let k = 0; k < 5; k++) this.noise(t + k * 0.11 + Math.random() * 0.05, 0.07, 0.05, 3400 + Math.random() * 1200, 'bandpass', null, 5); break
+      case 'gaze': this.tone(160, t, 0.35, 'triangle', 0.09, null, 120); this.tone(240, t + 0.05, 0.3, 'sine', 0.05, null, 170); break
       case 'sniff': for (let k = 0; k < 3; k++) this.noise(t + k * 0.14, 0.09, 0.08, 2600, 'bandpass', null, 2); break
       case 'thud': this.tone(95, t, 0.22, 'sine', 0.5, null, 45); this.noise(t, 0.12, 0.25, 500, 'lowpass'); break
       case 'clink': this.tone(2600, t, 0.18, 'triangle', 0.1); this.tone(3900, t + 0.02, 0.12, 'sine', 0.06); break
@@ -494,12 +506,14 @@ function makeNPC(type) {
   const nose = mesh(G.sph, M(o.bigNose ? 0xe8907a : 0xe0a088, false), 0, -0.02, 0.21, o.bigNose ? 0.07 : 0.035, o.bigNose ? 0.06 : 0.03, o.bigNose ? 0.09 : 0.03, head)
   if (o.stache) box(0.12, 0.03, 0.03, o.stache, 0, -0.07, 0.205, head)
   const mouth = box(0.06, 0.014, 0.012, 0x6a2a2a, 0, -0.11, 0.2, head)
+  // 鼻をつまむ手（ざわざわの時だけ見える）
+  const pinchH = mesh(G.sph, skinM, 0.02, -0.03, 0.27, 0.05, 0.045, 0.045, head); pinchH.visible = false
   if (o.beret) { const b = mesh(G.cyl, M(o.beret), 0.03, 0.2, -0.01, 0.2, 0.05, 0.2, head); b.rotation.z = 0.25 }
   if (o.cap) { mesh(G.cyl, M(o.cap), 0, 0.18, 0, 0.22, 0.1, 0.22, head); box(0.2, 0.02, 0.14, o.cap, 0, 0.14, 0.2, head) }
   if (o.band) mesh(new THREE.TorusGeometry(0.225, 0.025, 6, 20), M(o.band), 0, 0.09, 0, 1, 1, 1, head).rotation.x = Math.PI / 2
   if (o.kerchief) { const k = mesh(G.cone, M(o.kerchief), 0, 0.12, -0.03, 0.25, 0.22, 0.24, head); k.rotation.x = -0.3 }
   if (o.phones) { const p = mesh(new THREE.TorusGeometry(0.235, 0.025, 6, 20, Math.PI), M(0x1b1620), 0, 0.02, 0, 1, 1, 1, head); void p; for (const s of [-1, 1]) mesh(G.cyl, M(o.phones), s * 0.23, 0, 0, 0.07, 0.06, 0.07, head).rotation.z = Math.PI / 2 }
-  const n = { type, g, body, pivot, head, eyes, pupils, mouth, nose, seat, yaw: 0, pitch: 0.05, tYaw: 0, tPitch: 0.05, eye: 1, tEye: 1, markT: -1, phase: Math.random() * 6, idlePitch: 0.05, shake: 0, bounce: 0, sniffT: 0, aura: null, talkTo: null }
+  const n = { type, g, body, pivot, head, eyes, pupils, mouth, nose, seat, yaw: 0, pitch: 0.05, tYaw: 0, tPitch: 0.05, eye: 1, tEye: 1, markT: -1, phase: Math.random() * 6, idlePitch: 0.05, shake: 0, bounce: 0, sniffT: 0, aura: null, talkTo: null, pinchH, pinchT: 0, talkT: 0, denyT: 0 }
   // 持ち物
   if (o.hold) { n.bento = box(0.26, 0.08, 0.18, o.hold, 0, seat - 0.12, 0.26, g); box(0.27, 0.02, 0.19, 0xd8141f, 0, seat - 0.07, 0.26, g) }
   if (o.spray) n.sprayCan = mesh(G.cyl, M(0x3a8ad8), 0.3, seat - 0.2, 0.15, 0.04, 0.2, 0.04, g)
@@ -551,7 +565,7 @@ function getNPC(type) {
   const list = POOL[type] || (POOL[type] = [])
   let n = list.find(x => !x.inUse)
   if (!n) { n = makeNPC(type); list.push(n); car.add(n.g) }
-  n.inUse = true; n.g.visible = true; n.markT = -1; n.mark.scale.setScalar(0); n.yaw = 0; n.pitch = n.idlePitch; npcIdle(n); n.reacting = 0; n.reactT = undefined
+  n.inUse = true; n.g.visible = true; n.markT = -1; n.mark.scale.setScalar(0); n.yaw = 0; n.pitch = n.idlePitch; npcIdle(n); n.reacting = 0; n.reactT = undefined; n.pinchT = 0; n.talkT = 0; n.talkTo = null; n.denyT = 0; n.pinchH.visible = false
   if (n.boxes) for (const b of n.boxes) { b.position.copy(b.userData.home); b.rotation.set(0, 0, 0) }
   return n
 }
@@ -635,7 +649,7 @@ function updatePax(dt) {
       else {
         p.state = 'idle'; n.g.rotation.y = 0; placePax(p)
         // 匂いが残っていたら、乗った人が最初に気づく
-        if (S.smell > 0.22 && S.mode === 'play') { S.sniff = clamp(S.sniff + 0.12 * p.def.sniff, 0, 0.98); npcMark(n, '?'); npcLook(n, P.head.getWorldPosition(_hp), 0.6); n.reacting = 1.4; n.reactKind = '?'; fx(L2(pick(p.def.notice)), 'sb', { follow: n, life: 2.0 }); Snd.sfx('sniff') }
+        if (S.smell > 0.3 && S.mode === 'play' && !S.hunt) { npcMark(n, '?'); npcLook(n, P.head.getWorldPosition(_hp), 0.6); n.reacting = 1.4; n.reactKind = '?'; fx(L2(pick(p.def.notice)), 'sb', { follow: n, life: 2.0 }); Snd.sfx('sniff') }
         else if ((S.mode === 'play' || S.mode === 'title') && !(S.stop && S.stop.spoke)) { if (S.stop) S.stop.spoke = true; fx(L2(pick(p.def.board)), 'sb', { follow: n, life: 2.0 }) }
       }
     } else if (p.state === 'exit') {
@@ -663,7 +677,8 @@ function doBoarding() {
   if (old.length) ex = pick(old)
   else { const c2 = can.filter(p => !p.def.stay); if (c2.length && (aboard().length >= maxPax() || S.rand() < 0.5)) ex = pick(c2) }
   const before = aboard().length
-  if (ex) { ex.state = 'exit'; ex.t = 0; S.smell *= 0.7; if (before) S.sniff *= (before - 1) / before }
+  if (ex) { ex.state = 'exit'; ex.t = 0; S.smell *= 0.7; if (S.hunt && (S.hunt.from === ex || S.hunt.to === ex)) S.hunt.t = 99 }
+  void before
   // 区画の先頭の人（社長・デートの相手）は満員でも乗ってくる
   let t = z.lead && !S.pax.some(p => p.type === z.lead) ? z.lead : null
   if (!t && aboard().length < maxPax()) { const cand = z.pool.filter(t => !S.pax.some(p => p.type === t)); if (cand.length) t = pick(cand) }
@@ -718,6 +733,21 @@ function doPuff(n, big) {
 const stinks = []
 for (let i = 0; i < 10; i++) { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: stinkTex, transparent: true, opacity: 0, depthWrite: false })); sp.scale.set(0.17, 0.34, 1); scene.add(sp); stinks.push({ sp, a: i / 10 * Math.PI * 2, ph: Math.random() * 3, r: 0.4 + Math.random() * 0.4 }) }
 const cloud = new THREE.Mesh(G.sph, new THREE.MeshBasicMaterial({ color: 0xa6c46a, transparent: true, opacity: 0, depthWrite: false })); cloud.position.set(0, 0.95, -0.4); scene.add(cloud)
+// 犯人探しの視線（疑っている人の目から相手の顔へ、点が流れる）
+const dotTex = canvasTex(32, 32, (c) => { c.fillStyle = '#fff'; c.beginPath(); c.arc(16, 16, 12, 0, Math.PI * 2); c.fill(); c.lineWidth = 3; c.strokeStyle = '#1b1620'; c.stroke() })
+const gazeDots = []
+for (let i = 0; i < 9; i++) { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTex, color: 0xffd21f, transparent: true, opacity: 0, depthTest: false, depthWrite: false })); sp.scale.setScalar(0.05); sp.renderOrder = 9; scene.add(sp); gazeDots.push(sp) }
+const _ga = new THREE.Vector3(), _gb = new THREE.Vector3()
+function updateGaze() {
+  const h = S.hunt, on = S.mode === 'play' && h && h.from && h.to && h.from.state === 'idle'
+  if (on) { npcHeadPos(h.from.n, _ga); if (h.to === 'me') P.head.getWorldPosition(_gb); else npcHeadPos(h.to.n, _gb) }
+  const op = on ? Math.min(1, h.t / 0.25) : 0, me = on && h.to === 'me'
+  gazeDots.forEach((sp, i) => {
+    sp.material.opacity = op * 0.95; if (!on) return
+    const k = (i / gazeDots.length + S.time * 0.9) % 1
+    sp.position.lerpVectors(_ga, _gb, 0.12 + 0.76 * k); sp.material.color.setHex(me ? 0xff3d2e : 0xffd21f); sp.material.depthTest = !me; sp.scale.setScalar(me ? 0.065 : 0.05)
+  })
+}
 // 風（ドアが開いた時）・スプレー
 const winds = []
 for (let i = 0; i < 8; i++) { const m = box(0.01, 0.01, 0.5, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0 }), 0, 0, 0, scene); winds.push({ m, x: (Math.random() - 0.5) * 2.2, y: 0.4 + Math.random() * 1.8, z: Math.random() * 4 }) }
@@ -823,7 +853,7 @@ function startRun() {
   S.zone = 0; setStage(D.zones[0].id)
   S.evs = []; S.evLog = []; S.evN = 0; S.st = 0; S.planAt = D.run.firstAt; S.floorF = 1; S.floor = 1
   S.gauge = 0.3; S.strain = 0; S.flush = 0; S.snz = null; S.react = 0; S.relief = 0; S.shame = 0; S.punch = -1; S.level = 0; S.hop = 0; S.holding = false
-  S.smell = 0; S.sniff = 0; S.sniffStep = 0; S.door = 0; S.stop = null; S.lastBad = null; S.exitT = 0
+  S.smell = 0; S.sniff = 0; S.air = 0; S.hunt = null; S.zawaT = 0; Snd.tense = 0; S.door = 0; S.stop = null; S.lastBad = null; S.exitT = 0
   P.root.position.set(0, 0, 0); P.root.rotation.y = 0
   S.capT = -1; S.doCap = false; S.later = []
   spawnInitial()
@@ -868,16 +898,18 @@ function loseLife() {
 }
 function fartImpact() {
   const s = S.snz, f = FT[s.kind]; s.impact = true
-  const L = S.level, rating = rateFart(f, L), pts = rating === 'busted' ? 0 : f.pts
+  // 犯人探しで視線が自分に来ている間に出すと、どんなおならでも即バレ
+  const caught = gazedNow()
+  const L = S.level, rating = caught ? 'caught' : rateFart(f, L), pts = rating === 'busted' || caught ? 0 : f.pts
   const db = Math.round((f.db[0] + S.rand() * (f.db[1] - f.db[0]) + (rating === 'busted' ? 6 : 0)) * 10) / 10
-  const rec = { floor: S.floor, t: Math.round(S.st * 100) / 100, L: Math.round(L * 100) / 100, id: f.id, rating, pts, db, kind: f.id, lost: rating === 'busted', m: pts > 0 ? 1 : 0 }
+  const rec = { floor: S.floor, t: Math.round(S.st * 100) / 100, L: Math.round(L * 100) / 100, id: f.id, rating, pts, db, kind: f.id, lost: rating === 'busted' || caught, m: pts > 0 ? 1 : 0 }
   S.rec.push(rec); S.score += pts; s.rating = rating; s.db = db
   if (db > S.maxDb) { S.maxDb = db; S.capT = 0 }
   // 匂い（静かなおならほど強い。かき消しても匂いは出る）
   S.smell = Math.min(1.4, S.smell + f.smell); rec.smell = f.smell
-  S.lastBad = (rating === 'sus' || rating === 'busted') ? { rec, t: S.st } : null
+  S.lastBad = (rating === 'sus' || rating === 'busted' || caught) ? { rec, t: S.st } : null
   if (S.tut === 1 && f.id === 'bubo' && pts) { S.tut = 2; $('#hint').hidden = true }
-  const T = TT(), bp = buttPos(), big = f.id === 'bubo', bad = rating === 'busted', label = f[S.lang === 'ja' ? 'oj' : 'oe']
+  const T = TT(), bp = buttPos(), big = f.id === 'bubo', bad = rating === 'busted' || caught, label = f[S.lang === 'ja' ? 'oj' : 'oe']
   doPuff(big ? 26 : f.id === 'pu' ? 12 : 6, big); S.hop = big ? 1 : 0.4
   if (f.id === 'suka') Snd.noise(Snd.now(), 0.9, 0.05, 1200, 'bandpass', null, 0.8)
   else Snd.fart(big ? 1.1 : 0.6, big, big, !big)
@@ -888,14 +920,20 @@ function fartImpact() {
     S.react = 1.2; S.shame = 2.2; S.punch = 0; S.shake = 0.06; S.flush = 1
     allTurn('!', true)
     const ab = aboard().filter(p => p.type !== 'headphone'), withBust = ab.filter(p => p.def.bust)
-    const a1 = withBust.length ? pick(withBust) : ab[0]
-    if (a1) { const line = a1.def.bust ? L2(pick(a1.def.bust)) : pick(stageShout()); later(1.35, () => say(a1.n, line)) }
+    if (caught) {
+      // にらんでいた本人が「やっぱりお前か！！」。犯人が決まったので空気は戻る
+      const acc = S.hunt.from; allTurn('!', false); endHunt(false); S.smell *= 0.3; S.sniff = 0; S.air = 0
+      later(0.9, () => say(acc.n, T.caught, 1.6))
+    } else {
+      const a1 = withBust.length ? pick(withBust) : ab[0]
+      if (a1) { const line = a1.def.bust ? L2(pick(a1.def.bust)) : pick(stageShout()); later(1.35, () => say(a1.n, line)) }
+    }
     if (P.glasses.parent === P.head) { fling(P.glasses, new THREE.Vector3(0.6 + S.rand() * 0.4, 2.3, 1.3), new THREE.Vector3(9, 4, 12)); later(0.6, () => Snd.sfx('clink')) }
     const pr = PROPS[cur.id].items.find(m => m.parent !== scene); if (pr) { fling(pr, new THREE.Vector3(-0.6 - S.rand(), 1.6, 0.9), new THREE.Vector3(6, 2, 8)); later(0.52, () => Snd.sfx('thud')) }
   } else {
     fx(label, big ? 'ono yel' : 'ono small', { world: bp.clone().add(new THREE.Vector3(0.4, 0.05, 0.2)), size: vmin() * (big ? 0.085 : 0.05), life: 1.0, rot: -5, dy: -14, shake: big ? 3 : 0 })
     if (rating === 'sus') {
-      Snd.sfx('sus'); S.sniff = clamp(S.sniff + 0.15, 0, 0.98)
+      Snd.sfx('sus'); S.smell += 0.1
       const near = aboard().filter(p => p.type !== 'headphone').sort((a, b) => Math.hypot(SLOTS[a.slot].x, SLOTS[a.slot].z) - Math.hypot(SLOTS[b.slot].x, SLOTS[b.slot].z)).slice(0, 2)
       near.forEach(p => { p.n.reactT = 0.15; p.n.reactKind = '?'; p.n.reactUntil = 1.6 })
     } else { S.relief = 1.6; Snd.sfx(rating === 'perfect' ? 'perfect' : 'safe') }
@@ -913,39 +951,109 @@ function smellBust(why) {
   const sn = aboard().sort((a, b) => b.def.sniff - a.def.sniff)[0]
   if (sn) say(sn.n, T.smellOut, 1.1)
   Snd.sfx('gasp'); Snd.duck(1.6)
-  S.sniff = 0; S.smell *= 0.5; S.sniffStep = 0
+  S.sniff = 0; S.smell *= 0.3; endHunt(false); S.air = 0
   if (sn) later(1.1, () => verdict('smell')); else verdict('smell')
 }
 // 匂いとくんくん度（毎フレーム）。画面には数字を出さず、煙と乗客のしぐさで見せる
-function sniffMult() { const ab = aboard(); if (!ab.length) return 0; return Math.max(...ab.map(p => p.def.sniff)) * (0.75 + 0.07 * ab.length) }
-function coverNow() { const c = aboard().reduce((a, p) => a + (p.def.cover || 0) * (p.age < 4 ? 1 : 0.3), 0); return { pax: Math.min(1, c), door: S.door > 0.5 ? 1 : 0, who: aboard().find(p => p.def.cover && p.age < 4) } }
+// 鼻の利き方: 乗っている中で一番利く鼻と人数、上の階ほど利く。だれもいなければ 0
+function sniffMult() { const ab = aboard(); if (!ab.length) return 0; return (0.4 + 0.6 * Math.max(...ab.map(p => p.def.sniff))) * (0.9 + 0.04 * ab.length) * RP('nose') }
+function coverNow() { const c = aboard().reduce((a, p) => a + (p.def.cover || 0) * (p.age < 4 ? 1 : 0.12), 0); return { pax: Math.min(1, c), door: S.door > 0.5 ? 1 : 0, who: aboard().find(p => p.def.cover && p.age < 4) } }
+// 視線が自分に来ている（来た直後の一瞬は見逃す）
+const gazedNow = () => !!(S.hunt && S.hunt.to === 'me' && S.hunt.t >= 0.15)
+// 匂いはたまっていく。時間でゆっくり抜け、ドア・カレーや香水の人で早く抜ける
+// くんくん度（sniff）= 匂い × 鼻の利き方。これで空気の段階が 平常 → ざわざわ → 犯人探し と変わる。画面には数字を出さず、乗客の様子とセリフだけで見せる
 function updateSmell(dt) {
-  const cv = coverNow()
-  S.smell = Math.max(0, S.smell - S.smell * (0.045 + 0.55 * cv.pax + 1.6 * cv.door) * dt)
-  S.sniff += RP('sniff') * sniffMult() * S.smell * dt - (0.03 + 0.25 * cv.pax + 0.5 * cv.door) * dt
-  S.sniff = clamp(S.sniff, 0, 1)
-  if (S.sniff >= 1) { smellBust('sniff'); return }
+  const cv = coverNow(), A = D.run.air
+  S.smell = Math.max(0, S.smell - S.smell * (D.run.fade + 0.55 * cv.pax + 1.6 * cv.door) * dt)
+  const want = S.smell * sniffMult() / D.run.bustAt
+  S.sniff = clamp(S.sniff + (want - S.sniff) * Math.min(1, dt * 1.6), 0, 1.2)
   const ab = aboard()
-  // 清掃員のおばちゃんは、黙って消臭する
+  if (S.sniff >= 1 && ab.length) { smellBust('sniff'); return }
+  // 清掃員のおばちゃんは、ざわざわし始めたら黙って消臭する
   const cl = ab.find(p => p.def.spray && !p.sprayed)
-  if (cl && S.sniff >= 0.55) { cl.sprayed = true; S.smell = 0; S.sniff = Math.max(0, S.sniff - 0.35); Snd.sfx('spray'); say(cl.n, L2(pick(cl.def.notice)), 2.2); cl.n.reactT = 0.1; cl.n.reactKind = '?'; cl.n.reactUntil = 2.2 }
-  // しぐさの段階: くんくん（0.3）→ 顔をしかめてキョロキョロ（0.5）→ 振り向いて「…ん？」（0.75）
-  if (S.sniffStep === 0 && S.sniff > 0.3 && ab.length) { S.sniffStep = 1; Snd.sfx('sniff') }
-  if (S.sniffStep === 1 && S.sniff > 0.5 && ab.length) { S.sniffStep = 2; Snd.sfx('sniff') }
-  if (S.sniffStep === 2 && S.sniff > 0.75 && ab.length) { S.sniffStep = 3; const p = ab.slice().sort((a, b) => b.def.sniff - a.def.sniff)[0]; say(p.n, S.rand() < 0.5 ? TT().sniffQ : L2(pick(p.def.notice)), 2.0); for (const q of ab) npcMark(q.n, '?'); Snd.sfx('sniff') }
-  if (S.sniff < 0.2) S.sniffStep = 0
+  if (cl && S.sniff >= A.zawa) { cl.sprayed = true; S.smell = 0; S.sniff = 0; Snd.sfx('spray'); say(cl.n, L2(pick(cl.def.notice)), 2.2); cl.n.reactT = 0.1; cl.n.reactKind = '?'; cl.n.reactUntil = 2.2 }
+  // 空気の段階（行きと帰りでしきい値をずらして、行ったり来たりしない）
+  let air = S.air
+  if (!ab.length) air = 0
+  else if (air === 0) air = S.sniff >= A.hunt ? 2 : S.sniff >= A.zawa ? 1 : 0
+  else if (air === 1) air = S.sniff >= A.hunt ? 2 : S.sniff < A.calm ? 0 : 1
+  else if (S.sniff < A.huntEnd) air = S.sniff < A.calm ? 0 : 1
+  if (air !== S.air) setAir(air)
+  Snd.tense = S.air
+  if (S.air === 1) updateZawa(dt)
+  if (S.air === 2) updateHunt(dt)
+}
+function setAir(air) {
+  const was = S.air; S.air = air
+  if (air >= 1 && was === 0) { S.zawaT = 0.3; Snd.sfx('whisper') }
+  if (air === 2) startHunt()
+  if (was === 2 && air < 2) endHunt(true)
+  if (air === 0 && was >= 1) {
+    // 匂いが抜けて落ち着いた: 乗客も元に戻る
+    for (const p of aboard()) { p.n.pinchT = 0; p.n.talkT = 0 }
+    const ab = aboard(); if (ab.length && S.mode === 'play') say(pick(ab).n, pick(TT().calm), 1.6)
+  }
+}
+// ざわざわ: ひそひそ話す・顔を見合わせる・鼻をつまむ。吹き出しは一度に1つ
+function updateZawa(dt) {
+  S.zawaT -= dt; if (S.zawaT > 0) return
+  S.zawaT = 2.6 + S.rand() * 1.2
+  const ab = aboard().filter(p => !p.n.reacting || p.n.reacting <= 0); if (!ab.length) return
+  const a = pick(ab), others = ab.filter(p => p !== a)
+  if (others.length) { const b = pick(others); a.n.talkTo = b.n; a.n.talkT = 1.8; b.n.talkTo = a.n; b.n.talkT = 1.4 }
+  else a.n.pinchT = 2.2
+  const c = pick(ab); if (c !== a || !others.length) c.n.pinchT = 2.2
+  say(a.n, pick(TT().zawa), 1.5); Snd.sfx('whisper')
+}
+// 犯人探し: 乗客が一人ずつ順番に誰かを疑う（視線と「…あなた？」が人から人へ移る）
+function startHunt() { for (const f of FX) if (f.el.className === 'sb') f.t = Math.max(f.t, f.life - 0.15); S.hunt = { from: null, to: null, t: 0, dur: 0, n: 0 }; for (const p of aboard()) { p.n.pinchT = 0; p.n.talkT = 0 } nextGaze() }
+function endHunt(calm) {
+  const h = S.hunt; S.hunt = null
+  if (h && h.from && h.from.n) { h.from.n.lookP = null; h.from.n.gaze = 0 }
+  for (const p of S.pax) p.n.gaze = 0
+  void calm
+}
+function nextGaze() {
+  const h = S.hunt, ab = aboard(); if (!h || !ab.length) return
+  const prevTo = h.to
+  // 疑われた人が次に誰かを疑う（鎖のように）。自分を疑ったあとは別の人が引き継ぐ
+  let from = prevTo && prevTo !== 'me' && ab.includes(prevTo) ? prevTo : pick(ab.filter(p => p !== h.from).length ? ab.filter(p => p !== h.from) : ab)
+  const others = ab.filter(p => p !== from)
+  let to
+  if (prevTo === 'me') to = others.length ? pick(others) : null
+  else if (!others.length) to = 'me'
+  else {
+    // 匂いが強いほど自分が疑われやすい。最初の1人目は必ずほかの人を疑う（気づく間をあげる）
+    const pMe = h.n === 0 ? 0 : clamp(0.4 + 0.8 * (S.sniff - D.run.air.hunt), 0.4, 0.75)
+    to = S.rand() < pMe ? 'me' : pick(others)
+  }
+  for (const p of S.pax) p.n.gaze = 0
+  h.from = from; h.to = to; h.t = 0; h.n++; h.dur = to === 'me' ? D.run.gazeMe : D.run.gazeOther
+  from.n.gaze = 1; if (to && to !== 'me') to.n.gaze = 2
+  npcMark(from.n, '?')
+  const T = TT()
+  if (h.bub) h.bub.t = Math.max(h.bub.t, h.bub.life - 0.15)
+  h.bub = say(from.n, to === null ? T.huntNone : to === 'me' ? T.huntQ[0] : pick(T.huntQ), 1.35)
+  Snd.sfx(to === 'me' ? 'gaze' : 'whisper')
+}
+function updateHunt(dt) {
+  const h = S.hunt; if (!h) return
+  h.t += dt
+  if (h.to === 'me') S.flush = Math.max(S.flush, 0.6)
+  // 視線が自分に来ている間、出さずに耐えれば、疑いは別の人へ移る
+  if (h.t >= h.dur || !h.from || h.from.state !== 'idle') nextGaze()
 }
 
 // ---------- なすりつけ（ピンチの時だけ出てくる。回数制限つき）
 const blameTarget = () => aboard().filter(p => p.def.blame > 0).sort((a, b) => b.def.blame - a.def.blame)[0]
 const recentBad = () => S.lastBad && S.st - S.lastBad.t < 3.5 && !S.lastBad.rec.blamed
-const pinch = () => recentBad() || S.sniff >= 0.5
+const pinch = () => recentBad() || S.air >= 2
 function canRuse(k = 'blame') { return S.mode === 'play' && (S.ruseLeft[k] || 0) > 0 && !(S.snz && !S.snz.impact) && !!blameTarget() }
 function useRuse(k = 'blame') {
   if (k !== 'blame' || !canRuse(k)) return 'no'
   S.ruseLeft[k]--; Snd.init(); const T = TT(), log = { k, ok: true, t: S.st }; S.ruseLog.push(log)
   const tgt = blameTarget(); log.who = tgt.type; Snd.sfx('stare')
-  const recent = recentBad(), sus = recent || S.sniff >= 0.3
+  const recent = recentBad(), sus = recent || S.air >= 1
   // 全員の視線がなすりつけ先へ
   const hp = new THREE.Vector3(); blameHead(tgt.n, hp)
   aboard().forEach(p => { if (p !== tgt) { p.n.lookP = hp.clone(); p.n.reacting = 1.8; p.n.reactKind = '?' } })
@@ -957,12 +1065,13 @@ function useRuse(k = 'blame') {
       if (r.lost) { r.lost = false; S.lives++; if (S.lives > 0) S.kickAt = -1; S.lifeT = 0 }
       if (r.id && !r.pts) { r.pts = FT[r.id].pts; r.m = 1; S.score += r.pts }
     }
-    S.sniff = 0; S.smell *= 0.5; S.sniffStep = 0; tgt.entry.blamed = true; tgt.entry.exposure += 2
-    later(0.4, () => { npcMark(tgt.n, '!'); fx(L2(pick(tgt.def.blamed)), 'sb', { head: o => blameHead(tgt.n, o), life: 2.0 }); Snd.sfx('sus') })
+    // 疑いを押し付けた: 全員がその人をにらみ、本人は首をぶんぶん振る。匂いもその人のものに
+    S.sniff = 0; S.smell *= 0.3; endHunt(false); S.air = 0; tgt.entry.blamed = true; tgt.entry.exposure += 2
+    later(0.4, () => { npcMark(tgt.n, '!'); tgt.n.denyT = 1.8; fx(L2(pick(tgt.def.blamed)), 'sb', { head: o => blameHead(tgt.n, o), life: 2.0 }); Snd.sfx('sus') })
     later(0.9, () => verdict('blamed')); out = 'success'
   } else {
     S.rec.push({ floor: S.floor, t: Math.round(S.st * 100) / 100, m: 0, pts: 0, rating: 'blameFail', kind: 'blameFail', lost: true })
-    log.ok = false; S.lastBad = null; loseLife()
+    log.ok = false; S.lastBad = null; loseLife(); endHunt(false); S.smell *= 0.4; S.sniff = 0; S.air = 0
     later(0.5, () => { allTurn('!', false); S.shame = 2; say(tgt.n, pick(T.blameFail)); Snd.sfx('gasp') })
     later(0.9, () => verdict('blameFail')); out = 'fail'
   }
@@ -1248,13 +1357,22 @@ function updateNPCs(dt) {
     }
     if (p.state !== 'idle') { npcIdle(n) }
     else if (n.reacting > 0) { n.reacting -= dt; if (n.lookP) npcLook(n, n.lookP, 1); else npcLook(n, hp, n.reactKind === '!' ? 1 : 0.6); if (n.reacting <= 0) { n.lookP = null; npcIdle(n) } }
+    else if (n.denyT > 0) { n.denyT -= dt; n.tYaw = Math.sin(n.phase * 26) * 0.45; n.tPitch = 0.05; n.tEye = 1.5 }
+    // 犯人探し: 疑っている人は相手をじっと見る（目を細める）。疑われた人は目を丸くする
+    else if (S.mode === 'play' && S.hunt && n.gaze === 1) { if (S.hunt.to === 'me') npcLook(n, hp, 1); else if (S.hunt.to) npcLook(n, npcHeadPos(S.hunt.to.n, new THREE.Vector3()), 1); else { n.tYaw = Math.sin(n.phase * 2) * 0.8; n.tPitch = 0 } n.tEye = 0.45 }
+    else if (S.mode === 'play' && S.hunt && n.gaze === 2) { npcLook(n, npcHeadPos(S.hunt.from.n, new THREE.Vector3()), 1); n.tEye = 1.45 }
     else if (n.sniffT > 0) { n.sniffT -= dt; n.tYaw = Math.sin(n.phase * 2.2) * 0.7; n.tPitch = -0.25 + Math.sin(n.phase * 18) * 0.06; n.tEye = 0.8 }
     else if (act && S.mode === 'play' && act.src !== p) { npcLook(n, lookAtOf(act), 0.9); n.tEye = act.ph === 'peak' ? 1.25 : 1 }
-    // 匂いの段階をしぐさで見せる: くんくん → 顔をしかめてキョロキョロ → こっちを振り向く
-    else if (S.mode === 'play' && S.sniff > 0.75 && p.type !== 'headphone') { npcLook(n, hp, 0.8); n.tEye = 0.55 }
-    else if (S.mode === 'play' && S.sniff > 0.5) { n.tYaw = Math.sin(n.phase * 1.7 + p.slot) * 0.9; n.tPitch = -0.05; n.tEye = 0.5 }
-    else if (S.mode === 'play' && S.sniff > 0.3 && Math.sin(n.phase * 0.9 + p.slot) > -0.2) { n.tYaw = Math.sin(n.phase * 0.7) * 0.3; n.tPitch = -0.28 + Math.sin(n.phase * 18) * 0.07; n.tEye = 0.8 }
+    // 犯人探しの間、ほかの人はキョロキョロ見守る
+    else if (S.mode === 'play' && S.hunt) { n.tYaw = Math.sin(n.phase * 1.7 + p.slot) * 0.9; n.tPitch = -0.05; n.tEye = 0.7 }
+    // ざわざわ: 顔を見合わせてひそひそ・鼻をつまむ・くんくん
+    else if (S.mode === 'play' && S.air >= 1 && n.talkT > 0 && n.talkTo) { npcLook(n, npcHeadPos(n.talkTo, new THREE.Vector3()), 1); n.tEye = 0.8 }
+    else if (S.mode === 'play' && S.air >= 1 && n.pinchT > 0) { n.tYaw = Math.sin(n.phase * 0.8) * 0.2; n.tPitch = -0.1; n.tEye = 0.35 }
+    else if (S.mode === 'play' && S.air >= 1) { n.tYaw = Math.sin(n.phase * 0.7 + p.slot) * 0.5; n.tPitch = -0.28 + Math.sin(n.phase * 18) * 0.07; n.tEye = 0.7 }
+    else if (S.mode === 'play' && S.smell > 0.25 && Math.sin(n.phase * 0.9 + p.slot) > 0.4) { n.tYaw = Math.sin(n.phase * 0.7) * 0.3; n.tPitch = -0.2 + Math.sin(n.phase * 18) * 0.05; n.tEye = 0.9 }
     else npcIdle(n)
+    if (n.talkT > 0) n.talkT -= dt; if (n.pinchT > 0) n.pinchT -= dt
+    n.pinchH.visible = S.mode === 'play' && S.air >= 1 && n.pinchT > 0 && !n.dogG
     if (S.mode === 'result' && S.mood === 'shame') { npcLook(n, hp, 0.8); n.tEye = 1.3 }
     const sp = n.reacting > 0 ? 14 : 6
     n.yaw += (n.tYaw - n.yaw) * Math.min(1, dt * sp); n.pitch += (n.tPitch - n.pitch) * Math.min(1, dt * sp); n.eye += (n.tEye - n.eye) * Math.min(1, dt * 10)
@@ -1351,7 +1469,7 @@ function updateScene(dt) {
   winT += dt; indT += dt
   if (winT > 1 / 30) { winT = 0; const { ctx, c } = mirTex.userData; paintMirror(ctx, c.width, c.height); mirTex.needsUpdate = true }
   if (indT > 1 / 12) { indT = 0; drawInd(blink) }
-  updatePlayer(dt); updateNPCs(dt); updateFlyers(dt); updateCamera(dt)
+  updatePlayer(dt); updateNPCs(dt); updateFlyers(dt); updateCamera(dt); updateGaze()
 }
 
 // ---------- HUD（バー・メーターは置かない。点数ひとつ・ハート・おならボタンだけ）
@@ -1438,7 +1556,7 @@ loadFonts('!?').then(() => { TEX_EX = exTex('!', '#ff3d2e'); TEX_Q = exTex('?', 
 
 window.hs = {
   S, D, Snd, P, camera, renderer, SLOTS, CAR, FT, lampOn: () => lamp.material.color.getHex() !== 0x553311, newEvent, RP,
-  start: startRun, beginCount, fart: doFart, canFart, okNow, toResult, finishReveal, toTitle, drawCard, xPost, openX, useRuse, smellBust, calcResult, pinch,
+  start: startRun, beginCount, fart: doFart, canFart, okNow, toResult, finishReveal, toTitle, drawCard, xPost, openX, useRuse, smellBust, calcResult, pinch, gazedNow, nextGaze,
   level: () => S.level, aboard, sniffMult, coverNow, diff,
   cardDataURL: cardURL,
   setLang(l) { S.lang = l; applyLang() },

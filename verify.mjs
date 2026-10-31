@@ -80,6 +80,7 @@ const SIZES = [[360, 640, 'small'], [390, 844, 'phone'], [844, 390, 'land'], [66
 const BOT = readFileSync(ROOT + '/bot.js', 'utf8').replace(/^\/\/.*\n/gm, '')
 
 const PUB = 'https://tom3games.github.io/elevator-fart/'
+const GAZE_ME = 2.4
 const browser = await chromium.launch()
 const p = await open(browser)
 const run = (fn, arg) => p.evaluate(fn, arg)
@@ -89,6 +90,8 @@ const begin = seed => p.evaluate(s => { hs.dbg.pause(); hs.dbg.seed(s); hs.start
 // 箱を静かにして（大きな音を止めて）乗客を入れ替える
 const quiet = types => p.evaluate(t => { hs.S.evs = []; hs.S.planAt = 1e9; hs.dbg.clearPax(); for (const x of t) hs.dbg.addPax(x); hs.dbg.step(2) }, types)
 // 種類を出して、判定が出るまで進める（その時の記録を返す）
+// 匂いをためて犯人探しに入れる（視線を自分に向けたい時は me=true）
+const toHunt = me => p.evaluate(me => { hs.S.tut = 2; hs.S.smell = 0.75 * hs.D.run.bustAt / hs.sniffMult(); let n = 0; while (hs.S.air < 2 && n++ < 600) hs.dbg.step(1); if (me) { let k = 0; while (hs.S.hunt && hs.S.hunt.to !== 'me' && k++ < 40) hs.nextGaze() } hs.dbg.step(20); return { air: hs.S.air, to: hs.S.hunt && (hs.S.hunt.to === 'me' ? 'me' : hs.S.hunt.to && hs.S.hunt.to.type) } }, me)
 const fart = id => p.evaluate(k => { hs.S.cd[k] = 0; hs.S.snz = null; const o = hs.fart(k); hs.dbg.step(12); return { o, rec: hs.S.rec[hs.S.rec.length - 1] } }, id)
 
 await t('起動時にエラーが出ない', async () => { expect(p.errs.length === 0, p.errs.join('|')) })
@@ -198,6 +201,7 @@ await t('吹き出し・擬音は同時に2つまで（音でバレた時・匂�
     hs.S.cd.bubo = 0; hs.fart('bubo'); watch(180)
     hs.smellBust('sniff'); watch(180)
     hs.S.cd.bubo = 0; hs.fart('bubo'); hs.dbg.step(15); hs.dbg.set({ rand: () => 0.01 }); hs.useRuse('blame'); watch(180)
+    hs.dbg.set({ rand: Math.random }); hs.S.smell = 0.9; watch(240); hs.S.smell = 1.8; watch(600)
     return mx
   })
   expect(r <= 2, 'max ' + r); return { max: r }
@@ -269,11 +273,10 @@ await t('なすりつけ: ピンチの時だけ出る1つのボタン・失敗�
   const r = await run(() => {
     const vis = () => !document.querySelector('#bBlame').hidden
     hs.dbg.step(2); const calm = vis()
-    hs.S.sniff = 0.6; hs.dbg.step(2); const sniffy = vis()
-    hs.S.sniff = 0; hs.S.lastBad = null; hs.dbg.step(2)
-    const l0 = hs.S.lives; hs.S.sniff = 0.6; const rr = hs.S.rand; hs.dbg.set({ rand: () => 0.99 }); const out = hs.useRuse('blame'); hs.dbg.set({ rand: rr }); hs.dbg.step(60)
+    hs.S.smell = 0.75 * hs.D.run.bustAt / hs.sniffMult(); let n = 0; while (hs.S.air < 2 && n++ < 600) hs.dbg.step(1); hs.dbg.step(2); const sniffy = vis()
+    const l0 = hs.S.lives; const rr = hs.S.rand; hs.dbg.set({ rand: () => 0.99 }); const out = hs.useRuse('blame'); hs.dbg.set({ rand: rr }); hs.dbg.step(60)
     const lost = l0 - hs.S.lives
-    hs.S.ruseLeft.blame = 0; hs.S.sniff = 0.6; hs.dbg.step(2)
+    hs.S.ruseLeft.blame = 0; hs.S.smell = 0.75 * hs.D.run.bustAt / hs.sniffMult(); n = 0; while (hs.S.air < 2 && n++ < 600) hs.dbg.step(1); hs.dbg.step(2)
     return { calm, sniffy, out, lost, none: vis(), no: hs.useRuse('blame'), max: hs.D.ruses.blame }
   })
   expect(!r.calm && r.sniffy && r.out === 'fail' && r.lost === 1 && !r.none && r.no === 'no' && r.max === 3, JSON.stringify(r)); return r
@@ -325,19 +328,95 @@ await t('上の階ほど厳しい（予告が短く・山が短く・間隔が�
 })
 
 // ---- 匂い
-await t('匂い: すかしっぺを重ねると、乗客のしぐさが くんくん→キョロキョロ→振り向く と進み、匂いでバレる', async () => {
-  await begin(19); await quiet(['coworker', 'nose'])
+await t('すかし連打: 数発でざわざわ（ひそひそ・鼻をつまむ・BGMが不穏）→ 犯人探しに入る', async () => {
+  await begin(19); await quiet(['coworker', 'bucho', 'madam'])
   const r = await run(() => {
-    hs.S.tut = 2; const steps = new Set(); let n = 0, turned = 0
-    while (hs.S.smellBusts === 0 && n++ < 60 * 60) {
-      if (hs.canFart('suka')) hs.fart('suka'); hs.dbg.step(1); steps.add(hs.S.sniffStep)
-      if (hs.S.sniffStep === 3) { const ab = hs.aboard(); turned = Math.max(turned, ab.filter(p => Math.abs(p.n.yaw) > 0.1 || p.n.markT >= 0).length) }
+    hs.S.tut = 2; let n = 0, k = 0, zawaAt = -1, huntAt = -1, pinch = 0, talk = 0, said = new Set()
+    for (const p of hs.aboard()) p.age = 99
+    while (hs.S.air < 2 && n++ < 60 * 40) {
+      if (hs.canFart('suka')) { hs.fart('suka'); k++ }
+      hs.dbg.step(1)
+      if (hs.S.air >= 1 && zawaAt < 0) zawaAt = k
+      if (hs.S.air === 1) { for (const p of hs.aboard()) { if (p.n.pinchH.visible) pinch++; if (p.n.talkT > 0) talk++ } for (const e of document.querySelectorAll('#fx .sb')) said.add(e.textContent) }
+      if (hs.S.air === 2) huntAt = k
     }
-    hs.dbg.step(20)
-    return { sec: +(n / 60).toFixed(1), steps: [...steps].sort().join(), busts: hs.S.smellBusts, lives: hs.S.lives, turned, said: [...document.querySelectorAll('#fx .sb')].map(e => e.textContent).join('|') }
+    return { zawaAt, huntAt, pinch: pinch > 0, talk: talk > 0, tense: hs.Snd.tense, whisper: [...said].some(x => hs.D.T.ja.zawa.includes(x)), said: [...said].join('|'), busts: hs.S.smellBusts }
   })
-  await run(() => hs.dbg.render()); await p.screenshot({ path: ROOT + '/shots/smell-bust.png' })
-  expect(r.busts === 1 && r.lives === 2 && /1/.test(r.steps) && /2/.test(r.steps) && /3/.test(r.steps) && r.turned >= 1 && /くさっ/.test(r.said), JSON.stringify(r)); return r
+  expect(r.zawaAt >= 1 && r.zawaAt <= 3 && r.huntAt > r.zawaAt && r.huntAt <= 5 && r.pinch && r.talk && r.whisper && r.tense === 2 && r.busts === 0, JSON.stringify(r)); return r
+})
+await t('画面: ざわざわ・犯人探し・視線が自分に来た瞬間（縦 390x844 のスクショ）', async () => {
+  await begin(31); await quiet(['coworker', 'bucho', 'madam'])
+  const cnt = () => p.evaluate(() => [...document.querySelectorAll('#fx > *')].filter(e => +e.style.opacity > 0.05).length)
+  const z = await run(() => { hs.S.tut = 2; for (const p of hs.aboard()) p.age = 99; hs.S.smell = 0.9; let n = 0; while (hs.S.air < 1 && n++ < 300) hs.dbg.step(1); hs.S.zawaT = 0; hs.dbg.step(40); hs.dbg.render(); return hs.S.air })
+  await p.screenshot({ path: ROOT + '/shots/air-zawa.png' }); const c1 = await cnt()
+  const h = await toHunt(false); await run(() => hs.dbg.render()); await p.screenshot({ path: ROOT + '/shots/air-hunt.png' }); const c2 = await cnt()
+  const m = await run(() => { let k = 0; while (hs.S.hunt.to !== 'me' && k++ < 40) hs.nextGaze(); hs.dbg.step(25); hs.dbg.render(); return { to: hs.S.hunt.to, gazed: hs.gazedNow() } })
+  await p.screenshot({ path: ROOT + '/shots/air-gaze-me.png' }); const c3 = await cnt()
+  expect(z === 1 && h.air === 2 && m.to === 'me' && m.gazed && c1 <= 2 && c2 <= 2 && c3 <= 2, JSON.stringify({ z, h, m, c1, c2, c3 })); return { c1, c2, c3 }
+})
+await t('犯人探し: 視線が自分に来ている間に出すと、すかしっぺでも即バレ（1回失う・空気は戻る）', async () => {
+  await begin(32); await quiet(['coworker', 'bucho'])
+  await toHunt(true)
+  const r = await run(() => {
+    const l0 = hs.S.lives; hs.S.cd.suka = 0; hs.fart('suka'); hs.dbg.step(12)
+    const rec = hs.S.rec[hs.S.rec.length - 1], lost = l0 - hs.S.lives
+    hs.dbg.step(70); const said = [...document.querySelectorAll('#fx .sb')].map(e => e.textContent).join('|')
+    return { rating: rec.rating, pts: rec.pts, lost, hunt: !!hs.S.hunt, air: hs.S.air, said }
+  })
+  expect(r.rating === 'caught' && r.pts === 0 && r.lost === 1 && !r.hunt && r.air === 0 && /やっぱりお前か/.test(r.said), JSON.stringify(r)); return r
+})
+await t('犯人探し: 視線が自分に来ても、出さずに耐えれば疑いは別の人へ移る', async () => {
+  await begin(33); await quiet(['coworker', 'bucho', 'nose'])
+  await toHunt(true)
+  const r = await run(() => {
+    const l0 = hs.S.lives, from0 = hs.S.hunt.from.type; let n = 0
+    while (hs.S.hunt && hs.S.hunt.to === 'me' && n++ < 400) hs.dbg.step(1)
+    return { sec: +(n / 60).toFixed(2), to: hs.S.hunt && (hs.S.hunt.to === 'me' ? 'me' : hs.S.hunt.to ? hs.S.hunt.to.type : null), from: hs.S.hunt && hs.S.hunt.from.type, from0, lost: l0 - hs.S.lives, busts: hs.S.smellBusts }
+  })
+  expect(r.to && r.to !== 'me' && r.sec <= GAZE_ME + 0.1 && r.lost === 0, JSON.stringify(r)); return r
+})
+await t('犯人探し: 視線と「…あなた？」が人から人へ移る（疑われた人が次に疑う）', async () => {
+  await begin(34); await quiet(['coworker', 'bucho', 'madam', 'nose'])
+  await toHunt(false)
+  const r = await run(() => {
+    const seq = []; let prev = null, chain = 0, pairs = 0, q = 0
+    for (let i = 0; i < 60 * 14 && hs.S.hunt; i++) {
+      const h = hs.S.hunt, key = h.n
+      if (key !== prev) {
+        const to = h.to === 'me' ? 'me' : h.to ? h.to.type : '-'
+        if (seq.length) { const last = seq[seq.length - 1]; if (last.to !== 'me' && last.to !== '-') { pairs++; if (last.to === h.from.type) chain++ } }
+        seq.push({ from: h.from.type, to }); prev = key
+        if ([...document.querySelectorAll('#fx .sb')].some(e => /あなた|気のせい/.test(e.textContent))) q++
+      }
+      hs.S.smell = 0.75 * hs.D.run.bustAt / hs.sniffMult(); hs.dbg.step(1)
+    }
+    return { seq: seq.map(s => s.from + '>' + s.to).join(' '), chain, pairs, q, n: seq.length, froms: new Set(seq.map(s => s.from)).size }
+  })
+  expect(r.n >= 5 && r.froms >= 3 && r.chain === r.pairs && r.pairs >= 2 && r.q >= r.n - 1, JSON.stringify(r)); return r
+})
+await t('匂いが抜けると落ち着く: 犯人探し → ざわざわ → 平常に戻り、乗客も元どおり', async () => {
+  await begin(35); await quiet(['coworker', 'bucho'])
+  await toHunt(false)
+  const r = await run(() => {
+    const seen = []; let n = 0
+    while (hs.S.air > 0 && n++ < 60 * 90) { hs.dbg.step(1); if (seen[seen.length - 1] !== hs.S.air) seen.push(hs.S.air) }
+    hs.dbg.step(30)
+    const ab = hs.aboard()
+    return { sec: +(n / 60).toFixed(1), seen: seen.join('>'), hunt: !!hs.S.hunt, tense: hs.Snd.tense, pinch: ab.some(p => p.n.pinchH.visible), gaze: ab.some(p => p.n.gaze), busts: hs.S.smellBusts, lives: hs.S.lives }
+  })
+  expect(r.seen.endsWith('0') && r.seen.includes('1') && !r.hunt && r.tense === 0 && !r.pinch && !r.gaze && r.busts === 0 && r.sec < 60, JSON.stringify(r)); return r
+})
+await t('犯人探し中の なすりつけ: 成功で疑いを押し付けて空気が戻る（押し付けられた人は首を振る）／失敗で1回失う', async () => {
+  await begin(36); await quiet(['coworker', 'dog'])
+  await toHunt(true)
+  const ok = await run(() => {
+    const btn = !document.querySelector('#bBlame').hidden, rr = hs.S.rand; hs.dbg.set({ rand: () => 0.01 }); const out = hs.useRuse('blame'); hs.dbg.set({ rand: rr }); hs.dbg.step(40)
+    const dog = hs.aboard().find(p => p.type === 'dog'); return { btn, out, hunt: !!hs.S.hunt, air: hs.S.air, deny: dog.n.denyT > 0, lives: hs.S.lives }
+  })
+  await run(() => hs.dbg.render()); await p.screenshot({ path: ROOT + '/shots/air-blame.png' })
+  await toHunt(true)
+  const ng = await run(() => { const l0 = hs.S.lives, rr = hs.S.rand; hs.dbg.set({ rand: () => 0.99 }); const out = hs.useRuse('blame'); hs.dbg.set({ rand: rr }); hs.dbg.step(40); return { out, lost: l0 - hs.S.lives, hunt: !!hs.S.hunt } })
+  expect(ok.btn && ok.out === 'success' && !ok.hunt && ok.air === 0 && ok.deny && ok.lives === 3 && ng.out === 'fail' && ng.lost === 1 && !ng.hunt, JSON.stringify({ ok, ng })); return { ok, ng }
 })
 await t('匂い隠し: ドアが開いている間は匂いがすぐ消え、くんくん度も下がる', async () => {
   await begin(20)
@@ -364,14 +443,14 @@ await t('匂い: だれも乗っていなければ、くんくん度は上がら
   expect(r.sniff === 0 && r.busts === 0, JSON.stringify(r)); return r
 })
 // ---- 乗客
-await t('乗客: 鼻が利く人がいると、くんくん度の上がり方が速い（同僚の2倍以上）', async () => {
+await t('乗客: 鼻が利く人がいると、くんくん度の上がり方が速い（同僚の1.6倍以上）', async () => {
   await begin(23)
   const r = await run(() => {
     hs.S.evs = []; hs.S.planAt = 1e9
     hs.dbg.floor(30); const meas = t => { hs.dbg.clearPax(); hs.dbg.addPax(t); hs.S.smell = 1.2; hs.S.sniff = 0; hs.S.smellBusts = 0; hs.S.stop = { t: 9, did: true }; hs.dbg.step(30); return +hs.S.sniff.toFixed(3) }
     return { coworker: meas('coworker'), nose: meas('nose'), dog: meas('dog'), headphoneKid: meas('headphone') }
   })
-  expect(r.nose > r.coworker * 2 && r.dog > r.coworker && r.headphoneKid < r.coworker, JSON.stringify(r)); return r
+  expect(r.nose > r.coworker * 1.6 && r.dog > r.coworker && r.headphoneKid < r.coworker, JSON.stringify(r)); return r
 })
 await t('乗客: 清掃員のおばちゃんは、くんくん度が上がると1回だけ黙って消臭する', async () => {
   await begin(24)
@@ -445,15 +524,15 @@ await t('同じ種と同じ操作なら同じ結果（再現性・乗客の顔�
   expect(a === b, a.slice(0, 80) + ' vs ' + b.slice(0, 80)); return { n: JSON.parse(a).rec.length }
 })
 let dist
-await t('点数の分布: 上手い人（光を見て押す・なすりつけも使う）は最高ランク2〜6割／溜まったら全部押す・すかしっぺだけ・何もしない は低い', async () => {
+await t('点数の分布: 上手い人（光を見て押す・匂いを見て混ぜる・なすりつけも使う）は最高ランク2〜6割／すかし連打は上手い人の1/3未満・溜まったら全部押す・何もしない は低い', async () => {
   dist = await p.evaluate(b => {
     const bot = eval(b), run = (m, n, base) => { const o = []; for (let i = 0; i < n; i++) { hs.dbg.seed(base + i * 7); hs.start(); o.push(bot(m, base * 31 + i)) } return o }
     const TOP = hs.D.ranks[0].min
     const st = a => { const sc = a.map(x => x.score).sort((x, y) => x - y), fl = a.map(x => x.floor).sort((x, y) => x - y); return { min: sc[0], med: sc[sc.length >> 1], max: sc[sc.length - 1], top: sc.filter(x => x >= TOP).length, n: sc.length, floorMed: fl[fl.length >> 1], roof: a.filter(x => x.roof).length, ranks: Object.entries(a.reduce((o, x) => (o[x.rank] = (o[x.rank] || 0) + 1, o), {})).map(e => e.join(':')).join(' ') } }
-    return { skilled: st(run('skilled', 20, 100)), skilledR: st(run('skilledR', 20, 100)), aim: st(run('aim', 10, 100)), spam: st(run('spam', 6, 300)), suka: st(run('suka', 6, 300)), never: st(run('never', 4, 500)) }
+    return { skilled: st(run('skilled', 20, 100)), skilledR: st(run('skilledR', 20, 100)), aim: st(run('aim', 10, 100)), spam: st(run('spam', 6, 300)), suka: st(run('suka', 6, 300)), sukaWait: st(run('sukaWait', 6, 300)), never: st(run('never', 4, 500)) }
   }, BOT)
   const d = dist
-  expect(d.skilledR.top >= 4 && d.skilledR.top <= 12 && d.skilledR.med > d.skilled.med * 0.9 && d.spam.max < 20 && d.suka.max < d.skilledR.med && d.never.max === 0, JSON.stringify(d)); return d
+  expect(d.skilledR.top >= 4 && d.skilledR.top <= 12 && d.skilledR.med > d.skilled.med * 0.9 && d.spam.max < 20 && d.suka.max * 3 < d.skilled.med && d.sukaWait.med * 2.5 < d.skilled.med && d.never.max === 0, JSON.stringify(d)); return d
 })
 await t('英語に切り替えると全部の文言が英語になる（ボタン・乗客・結果）', async () => {
   const r = await run(() => {
@@ -513,7 +592,7 @@ for (const [w, h, name0, en] of [...SIZES, [360, 640, 'small', 1], [667, 375, 'l
   const fbSize = await q.evaluate(() => [...document.querySelectorAll('.fb')].map(b => { const n = b.querySelector('.fn'), br = b.getBoundingClientRect(), nr = n.getBoundingClientRect(); return { h: Math.round(br.height), fit: nr.left >= br.left - 1 && nr.right <= br.right + 1 && nr.height < 30 } }))
   await q.evaluate(() => { const e = hs.dbg.toPeak(-1.2); hs.dbg.render() }); views.warn = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-warn.png` })
   await q.evaluate(() => { hs.dbg.toPeak(0.25); hs.fart('bubo'); hs.dbg.step(14); hs.dbg.render() }); views.fart = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-fart.png` })
-  await q.evaluate(() => { hs.dbg.step(120); hs.S.smell = 1.1; hs.S.sniff = 0.8; hs.S.sniffStep = 2; hs.dbg.step(30); hs.dbg.render() }); views.smell = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-smell.png` })
+  await q.evaluate(() => { hs.dbg.step(120); hs.S.smell = 0.75 * hs.D.run.bustAt / hs.sniffMult(); let n = 0; while (hs.S.air < 2 && n++ < 600) hs.dbg.step(1); if (hs.S.hunt) { let k = 0; while (hs.S.hunt.to !== 'me' && k++ < 40) hs.nextGaze() } hs.dbg.step(25); hs.dbg.render() }); views.hunt = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-hunt.png` })
   await q.evaluate(() => { hs.smellBust('sniff'); hs.dbg.step(25); hs.dbg.render() }); views.smellBust = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-smellbust.png` })
   await q.evaluate(() => { hs.dbg.step(200); hs.S.evs = []; hs.S.planAt = 1e9; hs.S.cd.bubo = 0; hs.fart('bubo'); hs.dbg.step(50); hs.dbg.render() }); views.busted = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-busted.png` })
   await q.evaluate(() => { hs.S.lives = 1; hs.S.cd.bubo = 0; hs.S.snz = null; hs.fart('bubo'); hs.dbg.step(140); hs.dbg.render() }); views.kicked = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-kicked.png` })

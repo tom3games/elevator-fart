@@ -1,15 +1,16 @@
 // 密室おなら選手権: 文言（日英）とステージのデータ
 window.HS = {
   // 1回の乗車を切れ目なく登り続ける。d = 難しさ（1階で0、span階で1、その先も少しずつ上がる）。[d=0の値, d=1の値]
-  // fast=離している時のハリ、slow=我慢中のハリ、strainUp=我慢中の限界、sniff=匂い1あたりのくんくん度の上がり方
-  // sniff=匂い1あたりのくんくん度の上がり方（毎秒）
+  // 匂いはたまっていくもの。fade=時間で抜ける速さ（毎秒の割合）、nose=鼻の利き方（階で上がる）、bustAt=この量（ふつうの鼻で）で「くさっ！！誰！？」
+  // air=空気の段階（くんくん度 0..1 で判定）: zawa 以上でざわざわ、hunt 以上で犯人探し。calm/huntEnd を下回ると戻る
+  // gazeMe=疑いの視線が自分に来ている秒（その間出さずに耐えれば別の人へ移る）、gazeOther=ほかの人を疑っている秒
   run: { lives: 3, top: 80, span: 50, dMax: 1.6, fpS: 0.5, firstAt: 4, gap: [8, 4.2], warn: [3.6, 2.0], peak: [1.25, 0.6], fake: [0.1, 0.3], fakeFrom: 10,
-    sniff: [0.06, 0.17], maxPax: [2, 6] },
+    fade: 0.04, nose: [1, 1.6], bustAt: 2.0, air: { zawa: 0.33, calm: 0.2, hunt: 0.58, huntEnd: 0.3 }, gazeMe: 2.4, gazeOther: 1.6, maxPax: [2, 6] },
   // おならの種類。need=かき消すのに要るまわりの音（-1=無音なので要らない）、smell=たまる匂い、pts=点、cd=溜まり直すまでの秒、db=大きさ
   farts: [
     { id: 'suka', need: -1, smell: 0.5, pts: 1, cd: 2.0, db: [38, 46], ja: 'すかしっぺ', en: 'Silent', oj: '（すぅ…）', oe: '(fssss...)' },
-    { id: 'pu', need: 0.3, smell: 0.22, pts: 3, cd: 3.0, db: [68, 78], ja: 'ぷっ', en: 'Toot', oj: 'ぷっ', oe: 'pft!' },
-    { id: 'bubo', need: 0.75, smell: 0.3, pts: 10, cd: 5.5, db: [100, 118], ja: 'ブボボボッ', en: 'Thunder', oj: 'ブボボボッ！！', oe: 'BRRRAAAP!!' },
+    { id: 'pu', need: 0.3, smell: 0.3, pts: 3, cd: 3.0, db: [68, 78], ja: 'ぷっ', en: 'Toot', oj: 'ぷっ', oe: 'pft!' },
+    { id: 'bubo', need: 0.75, smell: 0.42, pts: 10, cd: 5.5, db: [100, 118], ja: 'ブボボボッ', en: 'Thunder', oj: 'ブボボボッ！！', oe: 'BRRRAAAP!!' },
   ],
   // 階が上がると内装と乗ってくる顔ぶれが変わる（区切りの画面は出さない）。lead=その区画で最初に乗ってくる人
   zones: [
@@ -146,7 +147,7 @@ window.HS = {
       howSteps: [
         ['go', '下のボタンで<b>おならを出す</b>。<b>大きいほど高得点</b>。光っている時に出せば安全'],
         ['ear', '<b>ブボボボッ</b>は、チャイムや揺れの<b>大きな音にかぶせる</b>。静かな時に出すとバレる'],
-        ['nose', '<b>すかしっぺ</b>は無音でも<b>匂いがたまる</b>。<b>3回バレたら降ろされる</b>。ピンチは<b>なすりつけ</b>'],
+        ['nose', '<b>すかしっぺ</b>も<b>匂いがたまる</b>。たまると<b>犯人探し</b>が始まる。<b>にらまれている間は出すな</b>'],
       ],
       holdPC: 'スペースかクリックを押している', holdSP: '画面を長押ししている',
       relPC: '離す', relSP: '指を離す', tapPC: 'クリック', tapSP: 'タップ',
@@ -155,11 +156,13 @@ window.HS = {
       soon: 'まもなく',
       introNo: '1階から出発', introT: 'バレずに稼げ', introS: '大きいおならほど高得点。3回バレたら降ろされる。上の階ほど、きびしくなる。',
       count: ['3', '2', '1', 'はじめ！'],
-      rate: { blameMiss: '空振り', perfect: '完全にかき消した', safe: 'セーフ', sus: 'あやしい…', busted: 'バレた！', explode: '暴発！', smell: '匂いでバレた！', blamed: 'なすりつけ成功', blameFail: 'なすりつけ失敗', kicked: '降ろされた！', roof: '屋上に到着！' },
+      rate: { blameMiss: '空振り', perfect: '完全にかき消した', safe: 'セーフ', sus: 'あやしい…', busted: 'バレた！', explode: '暴発！', smell: '匂いでバレた！', caught: '目が合ったまま出した！', blamed: 'なすりつけ成功', blameFail: 'なすりつけ失敗', kicked: '降ろされた！', roof: '屋上に到着！' },
       fart: 'ブッ！！', fartBig: 'ブボボボボッ！！！', fartSmall: '（…ぷすっ）',
       relief: 'ふぅ…（だれも気づいてない）',
       shout: ['（ザワッ）', '今の音…？', '（エレベーターの空気が止まった）'],
       glance: '…ん？', sniffQ: '…ん？なんか臭くない？', smellOut: 'くさっ！！誰！？',
+      zawa: ['…ねえ', 'なんか…', '（ひそひそ）', '…におわない？', '（顔を見合わせる）'],
+      huntQ: ['…あなた？', '…あなたでしょ？', 'いや…そっちじゃない？'], huntNone: '…気のせい？', caught: 'やっぱりお前か！！', calm: ['…気のせいか', '（空気が戻った）'],
       ruse: { blame: 'なすりつけ' },
       blameFail: ['いや、お前だろ', '（全員の視線があなたに戻ってくる）', '今のは無理があるでしょ'], blameNone: '（だれもいない…）',
       kickLine: ['…次で降りてもらえます？', '（全員がドアの方を指さしている）', '（開くボタンが連打されている）'],
@@ -183,7 +186,7 @@ window.HS = {
       howSteps: [
         ['go', 'Fart with the <b>buttons below</b>. <b>Bigger scores more</b>. A glowing button is safe'],
         ['ear', 'Time the <b>Thunder</b> with a <b>loud noise</b> like the chime. In silence, everyone hears it'],
-        ['nose', 'The <b>Silent</b> one still <b>smells</b>. <b>Busted 3 times and you are out</b>. In a pinch, <b>blame</b> someone'],
+        ['nose', 'Even the <b>Silent</b> one <b>smells</b>. Too much and they <b>hunt for the culprit</b>. <b>Never fart while stared at</b>'],
       ],
       holdPC: 'Hold Space or click', holdSP: 'Press and hold the screen',
       relPC: 'Let go', relSP: 'Lift your finger', tapPC: 'Click', tapSP: 'Tap',
@@ -192,11 +195,13 @@ window.HS = {
       soon: 'Soon:',
       introNo: 'From floor 1', introT: 'Score without getting caught', introS: 'Bigger farts score more. Busted 3 times and you are out. It gets harder higher up.',
       count: ['3', '2', '1', 'GO!'],
-      rate: { blameMiss: 'Whiff', perfect: 'Perfectly hidden', safe: 'Safe', sus: 'Suspicious...', busted: 'BUSTED!', explode: 'BURST!', smell: 'SMELLED OUT!', blamed: 'Blame worked', blameFail: 'Blame failed', kicked: 'KICKED OUT!', roof: 'ROOFTOP!' },
+      rate: { blameMiss: 'Whiff', perfect: 'Perfectly hidden', safe: 'Safe', sus: 'Suspicious...', busted: 'BUSTED!', explode: 'BURST!', smell: 'SMELLED OUT!', caught: 'FARTED MID-STARE!', blamed: 'Blame worked', blameFail: 'Blame failed', kicked: 'KICKED OUT!', roof: 'ROOFTOP!' },
       fart: 'PFFRT!!', fartBig: 'BRRRAAAPPP!!!', fartSmall: '(...pfft)',
       relief: 'phew... (nobody noticed)',
       shout: ['(murmur)', 'What was that?', '(the air in the elevator stops)'],
       glance: '...hm?', sniffQ: '...hm? Smell something?', smellOut: 'EWW! WHO WAS IT!?',
+      zawa: ['...hey', 'Is that...', '(whisper whisper)', '...you smell that?', '(exchanged looks)'],
+      huntQ: ['...was it you?', '...it was YOU, right?', 'No... wasn\'t it you?'], huntNone: '...just me?', caught: 'I KNEW IT WAS YOU!!', calm: ['...guess it was nothing', '(the air clears)'],
       ruse: { blame: 'Blame' },
       blameFail: ['No. It was YOU.', '(every eye swings back to you)', 'Nice try.'], blameNone: '(there is nobody to blame...)',
       kickLine: ['...Could you take the next one?', '(everyone is pointing at the door)', '(someone is mashing the OPEN button)'],
