@@ -1,0 +1,5 @@
+node_modules
+.DS_Store
+shots/
+_snap.mjs
+_dist.mjs

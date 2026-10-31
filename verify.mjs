@@ -1,0 +1,569 @@
+// 密室おなら選手権の検証。node verify.mjs（FPS=1 で GPU 描画の fps も測る）
+// 遊び: 1回の乗車で登り続け、おならボタン3種（すかしっぺ・ぷっ・ブボボボッ）で点を稼ぐ。3回バレたら降ろされる
+import { chromium, webkit } from 'playwright'
+import { spawn } from 'node:child_process'
+import { mkdirSync, readFileSync } from 'node:fs'
+const ROOT = import.meta.dirname
+mkdirSync(ROOT + '/shots', { recursive: true })
+const PORT = +process.env.PORT || 5617
+const server = spawn(process.execPath, ['server.mjs'], { cwd: ROOT, env: { ...process.env, PORT: String(PORT) } })
+await new Promise(r => setTimeout(r, 400))
+const URL0 = `http://localhost:${PORT}/`
+let pass = 0, fail = 0
+const results = []
+async function t(name, fn) {
+  try { const r = await fn(); if (r === false) throw new Error('false'); pass++; results.push(`ok   ${name}${r && r !== true ? '  ' + JSON.stringify(r) : ''}`) }
+  catch (e) { fail++; results.push(`FAIL ${name}  ${e.message.split('\n')[0]}`) }
+}
+const expect = (c, msg) => { if (!c) throw new Error(msg) }
+async function open(browser, opts = {}) {
+  const ctx = await browser.newContext({ locale: 'ja-JP', viewport: { width: 390, height: 844 }, ...opts })
+  await ctx.addInitScript(() => { try { localStorage.clear() } catch (e) {} })
+  const p = await ctx.newPage(); p.errs = []
+  p.on('pageerror', e => p.errs.push('pageerror ' + e.message))
+  p.on('console', m => { if (m.type() === 'error') p.errs.push('console ' + m.text()) })
+  p.on('requestfailed', r => { if (!/fonts\.(googleapis|gstatic)/.test(r.url())) p.errs.push('reqfail ' + r.url()) })
+  await p.goto(URL0); await p.waitForFunction(() => window.__hsReady, null, { timeout: 15000 })
+  await p.evaluate(() => document.fonts && document.fonts.ready)
+  return p
+}
+const overflow = p => p.evaluate(() => {
+  const W = document.documentElement.clientWidth, bad = []
+  for (const el of document.querySelectorAll('main:not([hidden]) *')) {
+    if (el.closest('[hidden]') || (el.checkVisibility && !el.checkVisibility({ visibilityProperty: true }))) continue
+    const r = el.getBoundingClientRect(); if (r.width && (r.right > W + 1 || r.left < -1)) bad.push((el.id || el.className || el.tagName) + ':' + Math.round(r.left) + '-' + Math.round(r.right))
+  }
+  return { sw: document.documentElement.scrollWidth, W, bad: bad.slice(0, 5) }
+})
+const fit = q => q.evaluate(() => {
+  const H = innerHeight, W = innerWidth, de = document.documentElement, over = []
+  if (de.scrollHeight > H + 1) over.push('page:' + de.scrollHeight)
+  for (const el of document.querySelectorAll('main:not([hidden]) button,main:not([hidden]) canvas,main:not([hidden]) .card,main:not([hidden]) .resCard,main:not([hidden]) .panel,#corner button')) {
+    if (!el.offsetParent || el.closest('[hidden]')) continue; const r = el.getBoundingClientRect()
+    if (r.bottom > H + 1 || r.top < -1 || r.right > W + 1 || r.left < -1) over.push((el.id || el.className) + ':' + Math.round(r.top) + '-' + Math.round(r.bottom))
+  }
+  // 右上の小ボタンと HUD が重ならない
+  const c = document.querySelector('#corner').getBoundingClientRect()
+  for (const el of document.querySelectorAll('main:not([hidden]) .stChip,main:not([hidden]) .logo .main,main:not([hidden]) .resCard,main:not([hidden]) .panel,main:not([hidden]) .card:not([hidden])')) { if (el.closest('[hidden]')) continue; const r = el.getBoundingClientRect(); if (r.width && r.right > c.left + 2 && r.left < c.right && r.top < c.bottom - 2 && r.bottom > c.top) over.push('corner-overlap:' + (el.id || el.className)) }
+  // プレイ画面の HUD 同士が重ならない（おならボタン・なすりつけ・ヒント・点数・右上）
+  const hud = ['.farts', '#bBlame', '#hint', '.stChip', '#corner'].map(q => [q, document.querySelector(q)]).filter(([q, e]) => e && e.offsetParent && !e.closest('[hidden]')).map(([q, e]) => [q, e.getBoundingClientRect()])
+  for (let i = 0; i < hud.length; i++) for (let j = i + 1; j < hud.length; j++) { const [qa, a] = hud[i], [qb, b] = hud[j]; if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) over.push('hud:' + qa + '/' + qb) }
+  return { H, over: over.slice(0, 6) }
+})
+// Xでポスト: window.open を差し替えて、開かれるURLを取る
+const xCheck = async (p, ns, want, tag, pub) => {
+  await p.evaluate(() => { window.__opened = []; window.open = (...a) => { window.__opened.push(a); return null } })
+  const vis = await p.isVisible('#bX'); expect(vis, 'Xボタンが見えない')
+  await p.click('#bX')
+  const r = await p.evaluate(ns => ({ o: window.__opened, api: window[ns].xPost(), label: document.querySelector('#bX').textContent.trim(), bg: getComputedStyle(document.querySelector('#bX')).backgroundColor, svg: !!document.querySelector('#bX svg path') }), ns)
+  expect(r.o.length === 1, 'open回数 ' + r.o.length)
+  const [href, target, feat] = r.o[0], u = new URL(href), text = u.searchParams.get('text')
+  expect(href.startsWith('https://x.com/intent/post?') && target === '_blank' && /noopener/.test(feat), href + ' ' + target + ' ' + feat)
+  expect(u.searchParams.get('url') === pub && !/https?:/.test(text), 'url ' + href)
+  expect(text.includes(tag) && want.every(w => text.includes(String(w))), 'text ' + text + ' want ' + want.join(','))
+  expect(text === r.api.text && r.svg && r.bg === 'rgb(0, 0, 0)', JSON.stringify(r))
+  return { label: r.label, text }
+}
+// 保存・Xボタンの文字が1行に収まっている（折り返しなし）
+const oneLine = p => p.evaluate(() => {
+  const bad = []
+  for (const id of ['#bSave', '#bX']) { const b = document.querySelector(id); if (!b) { bad.push(id + ':none'); continue }
+    const sp = [...b.querySelectorAll('span')].pop() || b, rg = document.createRange(); rg.selectNodeContents(sp)
+    const tops = new Set([...rg.getClientRects()].filter(x => x.width > 0).map(x => Math.round(x.top)))
+    const br = b.getBoundingClientRect(), sr = sp.getBoundingClientRect()
+    if (tops.size > 1 || sr.left < br.left - 1 || sr.right > br.right + 1) bad.push(id + ':' + tops.size + 'lines') }
+  return bad
+})
+const SIZES = [[360, 640, 'small'], [390, 844, 'phone'], [844, 390, 'land'], [667, 375, 'land-se'], [768, 1024, 'tab'], [1440, 900, 'pc']]
+
+// ボット（中身は bot.js。verify と分布の確認で同じものを使う）
+const BOT = readFileSync(ROOT + '/bot.js', 'utf8').replace(/^\/\/.*\n/gm, '')
+
+const PUB = 'https://tom3games.github.io/elevator-fart/'
+const browser = await chromium.launch()
+const p = await open(browser)
+const run = (fn, arg) => p.evaluate(fn, arg)
+const botRun = (mode, seed, bseed) => p.evaluate(([b, m, s, bs]) => { hs.dbg.pause(); hs.dbg.seed(s); hs.start(); return eval(b)(m, bs) }, [BOT, mode, seed, bseed])
+// 乗車を始めて、カウントを終えたところまで進める
+const begin = seed => p.evaluate(s => { hs.dbg.pause(); hs.dbg.seed(s); hs.start(); hs.beginCount(); hs.dbg.step(150) }, seed)
+// 箱を静かにして（大きな音を止めて）乗客を入れ替える
+const quiet = types => p.evaluate(t => { hs.S.evs = []; hs.S.planAt = 1e9; hs.dbg.clearPax(); for (const x of t) hs.dbg.addPax(x); hs.dbg.step(2) }, types)
+// 種類を出して、判定が出るまで進める（その時の記録を返す）
+const fart = id => p.evaluate(k => { hs.S.cd[k] = 0; hs.S.snz = null; const o = hs.fart(k); hs.dbg.step(12); return { o, rec: hs.S.rec[hs.S.rec.length - 1] } }, id)
+
+await t('起動時にエラーが出ない', async () => { expect(p.errs.length === 0, p.errs.join('|')) })
+await t('ブラウザの拡大が起きない（viewport・ピンチ・Ctrl+ホイール・Ctrl+プラス）', async () => {
+  const r = await p.evaluate(() => {
+    const vp = document.querySelector('meta[name=viewport]').content
+    const g = new Event('gesturestart', { cancelable: true }); document.dispatchEvent(g)
+    const w = new WheelEvent('wheel', { ctrlKey: true, deltaY: -10, bubbles: true, cancelable: true }); window.dispatchEvent(w)
+    const k = new KeyboardEvent('keydown', { key: '+', ctrlKey: true, bubbles: true, cancelable: true }); window.dispatchEvent(k)
+    return { vp, gesture: g.defaultPrevented, wheel: w.defaultPrevented, key: k.defaultPrevented, ta: getComputedStyle(document.documentElement).touchAction, us: getComputedStyle(document.body).userSelect }
+  })
+  expect(/user-scalable=no/.test(r.vp) && r.gesture && r.wheel && r.key && r.ta === 'manipulation' && r.us === 'none', JSON.stringify(r)); return r
+})
+await t('OGP 一式がある（og:image は公開URL・1200x630 の og.png）', async () => {
+  const r = await p.evaluate(async () => {
+    const g = k => (document.querySelector(`meta[property="${k}"]`) || document.querySelector(`meta[name="${k}"]`) || {}).content
+    const img = new Image(); img.src = 'og.png'; await img.decode().catch(() => {})
+    return { title: g('og:title'), desc: g('og:description'), image: g('og:image'), url: g('og:url'), type: g('og:type'), card: g('twitter:card'), w: img.naturalWidth, h: img.naturalHeight, dt: document.title }
+  })
+  expect(/おなら/.test(r.title) && /点/.test(r.desc) && r.image === PUB + 'og.png?v=3' && r.url === PUB && r.type === 'website' && r.card === 'summary_large_image' && r.w === 1200 && r.h === 630, JSON.stringify(r)); return { title: r.title, w: r.w, h: r.h }
+})
+await t('古い仕様の文言が残っていない（くしゃみ・我慢ゲージ・誤魔化し4種・ステージ）', async () => {
+  const r = await p.evaluate(() => {
+    const txt = JSON.stringify(hs.D.T) + JSON.stringify(hs.D.run) + document.head.innerHTML + document.body.innerHTML
+    return (txt.match(/くしゃみ|sneez|咳払い|次で降りる|ステージ|STAGE|がまん中|おなか|まわりの音/g) || []).slice(0, 5)
+  })
+  expect(!r.length, r.join(',')); return true
+})
+await t('3D が描けている（画面の色が散らばっている）', async () => {
+  const buf = await p.screenshot(); const r = await p.evaluate(async b64 => {
+    const img = new Image(); img.src = 'data:image/png;base64,' + b64; await img.decode(); const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const x = c.getContext('2d'); x.drawImage(img, 0, 0)
+    const d = x.getImageData(0, 0, c.width, c.height).data; let s = 0, s2 = 0, n = 0; for (let i = 0; i < d.length; i += 4 * 17) { const v = d[i] * .3 + d[i + 1] * .59 + d[i + 2] * .11; s += v; s2 += v * v; n++ } return Math.round(s2 / n - (s / n) ** 2)
+  }, buf.toString('base64'))
+  expect(r > 400, 'variance ' + r); return { variance: r }
+})
+
+// ---- 画面の情報量
+await t('HUD にバー・メーター・ゲージの要素が無い', async () => {
+  await begin(2)
+  const r = await run(() => {
+    const q = '#vPlay progress,#vPlay meter,#vPlay [class*=bar i],#vPlay [class*=gauge i],#vPlay [class*=meter i],#vPlay [id*=bar i],#vPlay [id*=gauge i],#vPlay [id*=meter i],#vPlay [class*=noise i]'
+    return [...document.querySelectorAll(q)].map(e => e.id || e.className)
+  })
+  expect(!r.length, r.join(',')); return true
+})
+await t('普段の画面に出ているのは 点数・ハート3つ・おならボタン3つ だけ（なすりつけは出ていない）', async () => {
+  await begin(2)
+  const r = await run(() => {
+    hs.S.tut = 2; document.querySelector('#hint').hidden = true; hs.dbg.step(2)
+    const vis = el => el && !el.hidden && !el.closest('[hidden]') && el.getClientRects().length > 0
+    const top = [...document.querySelectorAll('.hudTop > *')].filter(vis).map(e => e.className), bot = [...document.querySelectorAll('.hudBot > *')].filter(vis).map(e => e.className || e.id)
+    return { top, bot, hearts: document.querySelectorAll('#hLives i:not(.off)').length, score: document.querySelector('#hScore').textContent, fb: document.querySelectorAll('.farts .fb').length }
+  })
+  expect(r.top.join() === 'stChip' && r.bot.join() === 'farts' && r.hearts === 3 && r.score === '0点' && r.fb === 3, JSON.stringify(r)); return r
+})
+await t('最初の1回だけ、実際の画面で案内する（ボタンで出す→大きな音で ブボボボッ→できたら消える）', async () => {
+  await begin(3)
+  const r = await run(() => {
+    const h = () => { const e = document.querySelector('#hint'); return e.hidden ? '' : e.dataset.k }
+    hs.dbg.step(1); const a = h()
+    while (!hs.S.evs.some(e => !e.fake && e.ph === 'warn')) hs.dbg.step(1); hs.dbg.step(2); const b = h()
+    hs.dbg.toPeak(0.25); const c = h(), txt = document.querySelector('#hint').textContent; hs.fart('bubo'); hs.dbg.step(12)
+    const d = h(), tut = hs.S.tut
+    // バレた瞬間には案内を出さない（最初からやり直して、案内中に音でバレる）
+    hs.start(); hs.beginCount(); hs.dbg.step(150); hs.dbg.step(30); const e0 = h(); hs.S.evs = []; hs.S.planAt = 1e9; hs.S.cd.bubo = 0; hs.fart('bubo'); hs.dbg.step(20); const e1 = h()
+    hs.dbg.step(400); const late = h()
+    return { a, b, c, txt, d, tut, e0, e1, late }
+  })
+  await p.screenshot({ path: ROOT + '/shots/tutorial-peak.png' })
+  expect(r.a === 'tap' && r.b === 'wait' && r.c === 'rel' && /ブボボボッ/.test(r.txt) && r.d === '' && r.tut === 2 && r.e0 === 'tap' && r.e1 === '' && r.late === '', JSON.stringify(r)); return r
+})
+await t('予告は 3D の中で分かる（チャイムの前に階数表示のランプが点く・揺れの前に明かりがちらつく）', async () => {
+  await begin(4)
+  const r = await run(() => {
+    const out = { lampIdle: hs.lampOn() }
+    hs.S.evs = []; hs.S.planAt = 1e9; hs.S.evN = 0; hs.newEvent(); hs.dbg.step(Math.round(hs.S.evs[0].warn * 60 * 0.7)); out.chime = hs.S.evs[0].type; out.lampWarn = hs.lampOn()
+    hs.dbg.step(400); hs.S.evs = []; hs.S.evN = 1; hs.S.planAt = 1e9; hs.dbg.clearPax(); hs.dbg.addPax('coworker')
+    const rr = hs.S.rand; hs.dbg.set({ rand: () => 0.3 }); const e = hs.newEvent(); hs.dbg.set({ rand: rr }); out.other = e.type
+    let fl = 0; for (let i = 0; i < Math.round(e.warn * 60); i++) { hs.dbg.step(1); fl = Math.max(fl, hs.S.flicker || 0) } out.flicker = fl
+    return out
+  })
+  expect(!r.lampIdle && r.chime === 'chime' && r.lampWarn && r.other === 'shake' && r.flicker > 0.3, JSON.stringify(r)); return r
+})
+await t('大きな音が来た瞬間: 画面のふちが光り・画面が揺れ・大きな擬音が出る', async () => {
+  await begin(5)
+  const r = await run(() => { hs.S.tut = 2; hs.dbg.toPeak(0.1); return { flash: document.querySelector('#flash').className, shake: hs.S.shake, ono: [...document.querySelectorAll('#fx .ono.yel')].map(e => e.textContent).join('|') } })
+  await run(() => hs.dbg.render()); await p.screenshot({ path: ROOT + '/shots/peak.png' })
+  expect(r.flash === 'now' && r.shake > 0.03 && r.ono.length > 0, JSON.stringify(r)); return r
+})
+await t('匂いでバレた時: 「くさっ！！誰！？」と判定は同時に出さない（吹き出しが先、判定はあと）', async () => {
+  await begin(27); await quiet(['coworker', 'nose'])
+  const r = await run(() => {
+    const vis = sel => [...document.querySelectorAll('#fx ' + sel)].some(e => +e.style.opacity > 0.05)
+    hs.smellBust('sniff'); let both = 0, sb = 0, vd = 0
+    for (let i = 0; i < 150; i++) { hs.dbg.step(1); const a = vis('.sb'), b = vis('.verdict'); if (a && b) both++; if (a && !vd) sb++; if (b) vd++ }
+    return { both, sb, vd }
+  })
+  await run(() => hs.dbg.render()); await p.screenshot({ path: ROOT + '/shots/smell-bust-order.png' })
+  expect(r.both === 0 && r.sb > 30 && r.vd > 30, JSON.stringify(r)); return r
+})
+await t('吹き出し・擬音は同時に2つまで（音でバレた時・匂いでバレた時・なすりつけ）', async () => {
+  await begin(6)
+  const r = await run(() => {
+    let mx = 0; const cnt = () => [...document.querySelectorAll('#fx > *')].filter(e => +e.style.opacity >= 0.99).length
+    const watch = n => { for (let i = 0; i < n; i++) { hs.dbg.step(1); mx = Math.max(mx, cnt()) } }
+    hs.S.evs = []; hs.S.planAt = 1e9; hs.dbg.clearPax(); for (const t of ['coworker', 'bucho', 'nose', 'madam']) hs.dbg.addPax(t)
+    hs.S.cd.bubo = 0; hs.fart('bubo'); watch(180)
+    hs.smellBust('sniff'); watch(180)
+    hs.S.cd.bubo = 0; hs.fart('bubo'); hs.dbg.step(15); hs.dbg.set({ rand: () => 0.01 }); hs.useRuse('blame'); watch(180)
+    return mx
+  })
+  expect(r <= 2, 'max ' + r); return { max: r }
+})
+
+// ---- おならの種類と判定
+await t('種類: 静かな箱では すかしっぺ だけ通る・ぷっ と ブボボボッ はバレる', async () => {
+  await begin(7); await quiet(['coworker'])
+  const a = await fart('suka'), b = await fart('pu'), c = await fart('bubo')
+  expect(a.rec.rating === 'safe' && a.rec.pts === 1 && b.rec.rating === 'busted' && b.rec.pts === 0 && c.rec.rating === 'busted' && c.rec.pts === 0, JSON.stringify([a.rec, b.rec, c.rec].map(x => x.id + ':' + x.rating))); return [a, b, c].map(x => x.rec.id + ':' + x.rec.rating)
+})
+await t('種類: 大きな音の山なら ブボボボッ が通って10点・ヘッドホンの音もれなら ぷっ は通るが ブボボボッ は通らない', async () => {
+  await begin(8)
+  const peak = await run(() => { hs.S.tut = 2; hs.dbg.toPeak(hs.S.evs.length ? 0.3 : 0.3); hs.S.cd.bubo = 0; hs.fart('bubo'); hs.dbg.step(12); const r = hs.S.rec[hs.S.rec.length - 1]; return r.rating + ':' + r.pts })
+  await quiet(['headphone'])
+  const pu = await fart('pu'), bubo = await fart('bubo')
+  expect(/perfect:10|safe:10/.test(peak) && /safe|perfect/.test(pu.rec.rating) && pu.rec.pts === 3 && bubo.rec.rating !== 'perfect' && bubo.rec.rating !== 'safe', JSON.stringify({ peak, pu: pu.rec.rating, bubo: bubo.rec.rating })); return { peak, pu: pu.rec.rating, bubo: bubo.rec.rating }
+})
+await t('種類: 静かなおならほど匂いがたまる（すかしっぺ > ブボボボッ > ぷっ）', async () => {
+  const r = await run(() => Object.fromEntries(hs.D.farts.map(f => [f.id, f.smell])))
+  expect(r.suka > r.bubo && r.bubo > r.pu, JSON.stringify(r)); return r
+})
+await t('溜まり直し: 出した種類は少しのあいだ押せず、ボタン自体が下から満ちて戻る（連打できない）', async () => {
+  await begin(9); await quiet(['coworker'])
+  const r = await run(() => {
+    hs.S.cd.suka = 0; const a = hs.fart('suka'), b = hs.fart('suka'); hs.dbg.step(15)
+    const btn = document.querySelector('#f_suka'), cs = getComputedStyle(btn, '::before')
+    const mid = { dis: btn.disabled, cd: +btn.style.getPropertyValue('--cd'), wait: btn.classList.contains('wait'), coverH: parseFloat(cs.height), puOk: !document.querySelector('#f_pu').disabled }
+    hs.dbg.step(Math.round(hs.FT.suka.cd * 60) + 2)
+    return { a, b, mid, after: { dis: btn.disabled, cd: +btn.style.getPropertyValue('--cd') } }
+  })
+  expect(r.a === 'ok' && r.b === 'no' && r.mid.dis && r.mid.cd > 0.5 && r.mid.wait && r.mid.coverH > 20 && r.mid.puOk && !r.after.dis && r.after.cd === 0, JSON.stringify(r)); return r
+})
+await t('光るボタン: かき消せる時だけ光る（山で ブボボボッ が光る・静かな時は光らない）', async () => {
+  await begin(10)
+  const r = await run(() => {
+    hs.S.tut = 2; hs.dbg.clearPax(); hs.dbg.addPax('coworker'); const g = k => document.querySelector('#f_' + k).classList.contains('go')
+    hs.dbg.step(2); const calm = { bubo: g('bubo'), pu: g('pu'), suka: g('suka') }
+    hs.dbg.toPeak(0.3); return { calm, peak: { bubo: g('bubo'), pu: g('pu') } }
+  })
+  expect(!r.calm.bubo && !r.calm.pu && !r.calm.suka && r.peak.bubo && r.peak.pu, JSON.stringify(r)); return r
+})
+
+// ---- ライフ・終わり方
+await t('3回バレたら降ろされて終わる（結果に何階まで行けたかが出る）', async () => {
+  await begin(11); await quiet(['coworker', 'bucho'])
+  const r = await run(() => {
+    const lives = []
+    for (let i = 0; i < 3; i++) { hs.S.cd.bubo = 0; hs.S.snz = null; hs.fart('bubo'); hs.dbg.step(15); lives.push(hs.S.lives) }
+    const hearts = document.querySelectorAll('#hLives i:not(.off)').length
+    let n = 0; while (hs.S.mode === 'play' && n++ < 400) hs.dbg.step(1); const kicked = hs.S.mode
+    while (hs.S.mode !== 'result' && n++ < 800) hs.dbg.step(1)
+    hs.finishReveal(); return { lives, hearts, kicked, mode: hs.S.mode, floor: hs.S.result.floor, txt: document.querySelector('#rFloor').textContent }
+  })
+  expect(r.lives.join() === '2,1,0' && r.hearts === 0 && r.kicked === 'kicked' && r.mode === 'result' && r.txt === r.floor + '階まで到達', JSON.stringify(r)); return r
+})
+await t('なすりつけ: 3回目のバレも、すぐなすりつけて成功すれば取り消されて降ろされない（点も入る）', async () => {
+  await begin(12); await quiet(['coworker', 'dog'])
+  const r = await run(() => {
+    for (let i = 0; i < 3; i++) { hs.S.cd.bubo = 0; hs.S.snz = null; hs.fart('bubo'); hs.dbg.step(15) }
+    const before = { lives: hs.S.lives, score: hs.S.score, pinch: hs.pinch(), btn: !document.querySelector('#bBlame').hidden }
+    const rr = hs.S.rand; hs.dbg.set({ rand: () => 0.01 }); const out = hs.useRuse('blame'); hs.dbg.set({ rand: rr }); hs.dbg.step(200)
+    return { before, out, lives: hs.S.lives, score: hs.S.score, mode: hs.S.mode, who: hs.S.ruseLog[0].who, bubble: [...document.querySelectorAll('#fx .sb')].map(e => e.textContent).join('|') }
+  })
+  expect(r.before.lives === 0 && r.before.pinch && r.before.btn && r.out === 'success' && r.lives === 1 && r.score === 10 && r.mode === 'play' && r.who === 'dog', JSON.stringify(r)); return r
+})
+await t('なすりつけ: ピンチの時だけ出る1つのボタン・失敗するとさらに1回バレ・回数に限りがある', async () => {
+  await begin(13); await quiet(['coworker', 'bucho'])
+  const r = await run(() => {
+    const vis = () => !document.querySelector('#bBlame').hidden
+    hs.dbg.step(2); const calm = vis()
+    hs.S.sniff = 0.6; hs.dbg.step(2); const sniffy = vis()
+    hs.S.sniff = 0; hs.S.lastBad = null; hs.dbg.step(2)
+    const l0 = hs.S.lives; hs.S.sniff = 0.6; const rr = hs.S.rand; hs.dbg.set({ rand: () => 0.99 }); const out = hs.useRuse('blame'); hs.dbg.set({ rand: rr }); hs.dbg.step(60)
+    const lost = l0 - hs.S.lives
+    hs.S.ruseLeft.blame = 0; hs.S.sniff = 0.6; hs.dbg.step(2)
+    return { calm, sniffy, out, lost, none: vis(), no: hs.useRuse('blame'), max: hs.D.ruses.blame }
+  })
+  expect(!r.calm && r.sniffy && r.out === 'fail' && r.lost === 1 && !r.none && r.no === 'no' && r.max === 3, JSON.stringify(r)); return r
+})
+await t('屋上まで行くと胸を張って終わる', async () => {
+  await begin(14)
+  const r = await run(() => { hs.S.evs = []; hs.S.planAt = 1e9; hs.dbg.floor(hs.D.run.top - 0.3); let n = 0; while (hs.S.mode !== 'result' && n++ < 1200) hs.dbg.step(1); hs.finishReveal(); return { mode: hs.S.mode, roof: hs.S.result.roof, floor: hs.S.result.floor, txt: document.querySelector('#rFloor').textContent } })
+  expect(r.mode === 'result' && r.roof && r.floor === 80 && r.txt === '屋上まで到達', JSON.stringify(r)); return r
+})
+
+// ---- 一続きで登る
+await t('一続き: 区切りの画面を出さずに登り続け、20階で社長・40階でデートの顔ぶれと内装に変わる', async () => {
+  await begin(15)
+  const r = await run(() => {
+    hs.S.tut = 2; const seen = { zones: new Set(), ceo: false, partner: false, cards: 0 }
+    let n = 0
+    while (hs.S.mode === 'play' && hs.S.floor < 60 && n++ < 60 * 500) {
+      hs.S.lives = 3; hs.dbg.step(1); seen.zones.add(hs.S.zone)
+      if (hs.aboard().some(p => p.type === 'ceo')) seen.ceo = seen.ceo || hs.S.floor
+      if (hs.aboard().some(p => p.type === 'partner')) seen.partner = seen.partner || hs.S.floor
+      if (!document.querySelector('#introCard').hidden) seen.cards++
+    }
+    return { floor: hs.S.floor, zones: [...seen.zones].join(), ceo: seen.ceo, partner: seen.partner, cards: seen.cards, mode: hs.S.mode }
+  })
+  await run(() => hs.dbg.render()); await p.screenshot({ path: ROOT + '/shots/zone-date.png' })
+  expect(r.floor >= 60 && r.zones === '0,1,2' && r.ceo >= 20 && r.ceo < 40 && r.partner >= 40 && r.cards === 0 && r.mode === 'play', JSON.stringify(r)); return r
+})
+await t('乗り降り: 止まるたびに降りるのは1人まで・乗るのも1人まで', async () => {
+  await begin(16)
+  const r = await run(() => {
+    hs.S.tut = 2; const stops = []; let n = 0, was = null
+    while (stops.length < 6 && n++ < 60 * 200) {
+      hs.S.lives = 3; hs.dbg.step(1)
+      if (hs.S.stop && hs.S.stop !== was && hs.S.stop.did) { was = hs.S.stop; stops.push({ ex: hs.S.pax.filter(p => p.state === 'exit').length, bd: hs.S.pax.filter(p => p.state === 'board').length }) }
+    }
+    return stops
+  })
+  expect(r.length === 6 && r.every(s => s.ex <= 1 && s.bd <= 1) && r.some(s => s.ex + s.bd > 0), JSON.stringify(r)); return r
+})
+await t('上の階ほど厳しい（予告が短く・山が短く・間隔が短く・ひっかけは10階まで出ない）', async () => {
+  const r = await run(() => {
+    hs.dbg.seed(17); hs.start(); hs.beginCount(); hs.dbg.step(150)
+    const at = f => { hs.dbg.floor(f); return { warn: +hs.RP('warn').toFixed(2), peak: +hs.RP('peak').toFixed(2), gap: +hs.RP('gap').toFixed(2) } }
+    return { f1: at(1), f30: at(30), f60: at(60) }
+  })
+  const never = await botRun('never', 18, 1)
+  const log = await run(() => hs.S.evLog), early = log.filter(e => e.f < 10 && e.fake).length, later = log.filter(e => e.fake).length
+  expect(r.f1.warn > r.f30.warn && r.f30.warn > r.f60.warn && r.f1.peak > r.f60.peak && r.f1.gap > r.f60.gap && early === 0 && later >= 1, JSON.stringify({ ...r, early, later })); return { ...r, fakes: later }
+})
+
+// ---- 匂い
+await t('匂い: すかしっぺを重ねると、乗客のしぐさが くんくん→キョロキョロ→振り向く と進み、匂いでバレる', async () => {
+  await begin(19); await quiet(['coworker', 'nose'])
+  const r = await run(() => {
+    hs.S.tut = 2; const steps = new Set(); let n = 0, turned = 0
+    while (hs.S.smellBusts === 0 && n++ < 60 * 60) {
+      if (hs.canFart('suka')) hs.fart('suka'); hs.dbg.step(1); steps.add(hs.S.sniffStep)
+      if (hs.S.sniffStep === 3) { const ab = hs.aboard(); turned = Math.max(turned, ab.filter(p => Math.abs(p.n.yaw) > 0.1 || p.n.markT >= 0).length) }
+    }
+    hs.dbg.step(20)
+    return { sec: +(n / 60).toFixed(1), steps: [...steps].sort().join(), busts: hs.S.smellBusts, lives: hs.S.lives, turned, said: [...document.querySelectorAll('#fx .sb')].map(e => e.textContent).join('|') }
+  })
+  await run(() => hs.dbg.render()); await p.screenshot({ path: ROOT + '/shots/smell-bust.png' })
+  expect(r.busts === 1 && r.lives === 2 && /1/.test(r.steps) && /2/.test(r.steps) && /3/.test(r.steps) && r.turned >= 1 && /くさっ/.test(r.said), JSON.stringify(r)); return r
+})
+await t('匂い隠し: ドアが開いている間は匂いがすぐ消え、くんくん度も下がる', async () => {
+  await begin(20)
+  const r = await run(() => {
+    hs.S.evs = []; hs.S.planAt = 1e9; hs.dbg.clearPax(); hs.dbg.addPax('coworker')
+    const meas = door => { hs.S.smell = 1; hs.S.sniff = 0.5; hs.S.door = door; hs.S.stop = door ? { t: 1, did: true } : null; for (let i = 0; i < 60; i++) { if (door) { hs.S.stop.t = 1; hs.S.door = 1 } hs.dbg.step(1) } return { smell: +hs.S.smell.toFixed(3), sniff: +hs.S.sniff.toFixed(3) } }
+    const closed = meas(0), open = meas(1); hs.S.stop = null; hs.S.door = 0
+    return { closed, open }
+  })
+  expect(r.open.smell < r.closed.smell * 0.4 && r.open.sniff < r.closed.sniff, JSON.stringify(r)); return r
+})
+await t('匂い隠し: カレー弁当・香水の人が乗ってきた直後は匂いが消えやすい', async () => {
+  await begin(21)
+  const r = await run(() => {
+    hs.S.evs = []; hs.S.planAt = 1e9
+    const meas = types => { hs.dbg.clearPax(); for (const t of types) { const p = hs.dbg.addPax(t); p.age = 0 } hs.S.smell = 1; hs.S.sniff = 0.3; hs.dbg.step(60); return +hs.S.smell.toFixed(3) }
+    return { plain: meas(['coworker']), curry: meas(['coworker', 'curry']), madam: meas(['coworker', 'madam']) }
+  })
+  expect(r.curry < r.plain * 0.75 && r.madam < r.plain * 0.75, JSON.stringify(r)); return r
+})
+await t('匂い: だれも乗っていなければ、くんくん度は上がらない', async () => {
+  await begin(22)
+  const r = await run(() => { hs.S.evs = []; hs.S.planAt = 1e9; hs.dbg.clearPax(); hs.S.smell = 1; hs.dbg.step(180); return { sniff: hs.S.sniff, busts: hs.S.smellBusts } })
+  expect(r.sniff === 0 && r.busts === 0, JSON.stringify(r)); return r
+})
+// ---- 乗客
+await t('乗客: 鼻が利く人がいると、くんくん度の上がり方が速い（同僚の2倍以上）', async () => {
+  await begin(23)
+  const r = await run(() => {
+    hs.S.evs = []; hs.S.planAt = 1e9
+    hs.dbg.floor(30); const meas = t => { hs.dbg.clearPax(); hs.dbg.addPax(t); hs.S.smell = 1.2; hs.S.sniff = 0; hs.S.smellBusts = 0; hs.S.stop = { t: 9, did: true }; hs.dbg.step(30); return +hs.S.sniff.toFixed(3) }
+    return { coworker: meas('coworker'), nose: meas('nose'), dog: meas('dog'), headphoneKid: meas('headphone') }
+  })
+  expect(r.nose > r.coworker * 2 && r.dog > r.coworker && r.headphoneKid < r.coworker, JSON.stringify(r)); return r
+})
+await t('乗客: 清掃員のおばちゃんは、くんくん度が上がると1回だけ黙って消臭する', async () => {
+  await begin(24)
+  const r = await run(() => { hs.S.evs = []; hs.S.planAt = 1e9; hs.dbg.clearPax(); const c = hs.dbg.addPax('cleaner'); hs.S.smell = 1; hs.S.sniff = 0.56; hs.dbg.step(1); const a = { smell: hs.S.smell, sniff: hs.S.sniff, sprayed: c.sprayed }; hs.S.smell = 1; hs.S.sniff = 0.56; hs.dbg.step(1); return { a, again: hs.S.smell > 0.9 } })
+  expect(r.a.smell === 0 && r.a.sniff < 0.3 && r.a.sprayed && r.again, JSON.stringify(r)); return r
+})
+await t('乗客: 乗っている人の出す大きな音が顔ぶれで決まる（赤ちゃん→泣き声・犬→ほえる・社長→大笑い）', async () => {
+  const r = await run(() => {
+    const out = {}
+    for (const t of ['baby', 'dog', 'delivery', 'jk', 'headphone', 'ceo']) { hs.dbg.seed(25); hs.start(); hs.beginCount(); hs.dbg.step(150); hs.S.evs = []; hs.S.planAt = 1e9; hs.dbg.clearPax(); hs.dbg.addPax(t); hs.S.evN = 1; const rr = hs.S.rand; hs.dbg.set({ rand: () => 0.3 }); const e = hs.newEvent(); hs.dbg.set({ rand: rr }); out[t] = e.type + ':' + (e.src && e.src.type) }
+    return out
+  })
+  expect(r.baby === 'baby:baby' && r.dog === 'bark:dog' && r.delivery === 'cart:delivery' && r.jk === 'giggle:jk' && r.headphone === 'music:headphone' && r.ceo === 'laugh:ceo', JSON.stringify(r)); return r
+})
+await t('乗客: 箱からはみ出さない・重ならない（満員・犬と台車も込み）／14種類どれも出せる', async () => {
+  const r = await run(() => {
+    const bad = []
+    const combos = [['coworker', 'bucho', 'madam', 'curry', 'nose', 'headphone', 'baby', 'dog', 'delivery'], ['partner', 'dog', 'jk', 'yakiniku', 'cleaner', 'baby', 'ceo', 'delivery', 'madam'], ['ceo', 'dog', 'nose', 'cleaner', 'bucho', 'curry', 'headphone', 'jk']]
+    for (const c of combos) {
+      hs.dbg.clearPax(); for (const t of c) hs.dbg.addPax(t); hs.dbg.step(2)
+      const L = hs.dbg.layout(), C = hs.CAR
+      for (const a of L) if (Math.abs(a.x) > C.x - a.r + 0.02 || a.z < C.zb + a.r - 0.02 || a.z > C.zf - a.r) bad.push('out:' + a.k)
+      for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) { const a = L[i], b = L[j], d = Math.hypot(a.x - b.x, a.z - b.z), need = a.k.match(/dog-animal|cart/) || b.k.match(/dog-animal|cart/) ? 0.36 : 0.52; if (d < need) bad.push(`${a.k}-${b.k}:${d.toFixed(2)}`) }
+    }
+    const all = Object.keys(hs.D.pax); let made = 0; for (const t of all) { hs.dbg.clearPax(); if (hs.dbg.addPax(t)) made++ }
+    return { bad, made, all: all.length }
+  })
+  expect(!r.bad.length && r.made === r.all, JSON.stringify(r)); return r
+})
+await t('一言: 乗客14種類すべてに 乗る・降りる・気づく・なすりつけられた の一言が日英そろっている', async () => {
+  const r = await run(() => { const bad = []; for (const [k, v] of Object.entries(hs.D.pax)) for (const f of ['board', 'exit', 'notice', 'blamed']) { if (!v[f] || !v[f].length) bad.push(k + '.' + f); else for (const pr of v[f]) if (!pr[0] || !pr[1] || /[぀-ヿ一-鿿]/.test(pr[1])) bad.push(k + '.' + f) } return { bad, n: Object.keys(hs.D.pax).length } })
+  expect(!r.bad.length && r.n === 14, JSON.stringify(r)); return r
+})
+
+// ---- 通し・結果
+let skilled
+await t('通しで遊べる: 上手い人は点を稼いで、結果まで行く', async () => {
+  skilled = await botRun('skilledR', 2, 1)
+  expect(skilled.score >= 60 && skilled.floor >= 10 && skilled.steps < 60 * 900, JSON.stringify({ ...skilled, rec: skilled.rec.length })); return { score: skilled.score, floor: skilled.floor, rank: skilled.rank, n: skilled.n }
+})
+await t('結果画面: 大見出しが点数・何階まで到達を添える・ボタンが押せる位置に出る', async () => {
+  const r = await run(() => { hs.finishReveal(); return { pct: document.querySelector('#rPct').textContent, unit: document.querySelector('.resNum .pct span').textContent, floor: document.querySelector('#rFloor').textContent, stamp: document.querySelector('#rStamp').classList.contains('on'), rank: document.querySelector('#rRank').textContent, st: document.querySelector('#rStages').textContent, pax: document.querySelector('#rPax').textContent } })
+  await p.waitForTimeout(400)
+  expect(r.pct === String(skilled.score) && r.unit === '点' && /階まで到達|屋上まで到達/.test(r.floor) && r.stamp && r.rank && /バレずに/.test(r.st) && /なすりつけ/.test(r.st) && /今日の乗客/.test(r.pax), JSON.stringify(r)); await p.screenshot({ path: ROOT + '/shots/result.png' }); return r
+})
+await t('結果画面: 判定は発表まで見せない', async () => {
+  const r = await run(() => { hs.toResult(); hs.dbg.step(30); return { stamp: document.querySelector('#rStamp').classList.contains('on'), rank: document.querySelector('#rRank').classList.contains('on') } })
+  expect(!r.stamp && !r.rank, JSON.stringify(r)); return r
+})
+await t('結果カード画像: 1080x1350 で中身が描けている・顔写真が撮れている', async () => {
+  const r = await run(async () => {
+    hs.finishReveal(); const url = await hs.cardDataURL(); const img = new Image(); img.src = url; await img.decode()
+    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const x = c.getContext('2d'); x.drawImage(img, 0, 0)
+    const d = x.getImageData(0, 0, c.width, c.height).data; let s = 0, s2 = 0, n = 0; for (let i = 0; i < d.length; i += 4 * 31) { const v = d[i] * .3 + d[i + 1] * .59 + d[i + 2] * .11; s += v; s2 += v * v; n++ }
+    const ph = document.querySelector('#rPhoto').getContext('2d').getImageData(0, 0, 256, 256).data; let a = 0, a2 = 0, m = 0; for (let i = 0; i < ph.length; i += 4 * 7) { const v = ph[i] * .3 + ph[i + 1] * .59 + ph[i + 2] * .11; a += v; a2 += v * v; m++ }
+    return { w: img.width, h: img.height, v: Math.round(s2 / n - (s / n) ** 2), photo: hs.S.photo, pv: Math.round(a2 / m - (a / m) ** 2), url }
+  })
+  const { writeFileSync } = await import('node:fs'); writeFileSync(ROOT + '/shots/card.png', Buffer.from(r.url.split(',')[1], 'base64'))
+  expect(r.w === 1080 && r.h === 1350 && r.v > 1500 && r.photo && r.pv > 200, JSON.stringify({ ...r, url: 0 })); return { w: r.w, h: r.h, v: r.v, pv: r.pv }
+})
+await t('画像を保存ボタンでダウンロードされる（PC）', async () => {
+  const [dl] = await Promise.all([p.waitForEvent('download', { timeout: 5000 }), p.click('#bSave')])
+  expect(dl.suggestedFilename() === 'elevator-fart.png', dl.suggestedFilename()); return dl.suggestedFilename()
+})
+await t('Xでポスト: 点数・ランク・到達階入りの x.com/intent/post が新しいタブで開く', async () => {
+  const w = await run(() => { const r = hs.S.result; return ['エレベーターで' + r.score + '点', r.rank.t.ja, r.floor + '階まで到達', 'バレずに' + r.n + '発', r.db.toFixed(1) + 'dB'] })
+  const r = await xCheck(p, 'hs', w, '#密室おなら選手権', PUB); expect(r.label === 'Xでポスト', r.label); return r
+})
+await t('同じ種と同じ操作なら同じ結果（再現性・乗客の顔ぶれも同じ）', async () => {
+  const a = JSON.stringify(await botRun('skilledR', 42, 5)), b = JSON.stringify(await botRun('skilledR', 42, 5))
+  expect(a === b, a.slice(0, 80) + ' vs ' + b.slice(0, 80)); return { n: JSON.parse(a).rec.length }
+})
+let dist
+await t('点数の分布: 上手い人（光を見て押す・なすりつけも使う）は最高ランク2〜6割／溜まったら全部押す・すかしっぺだけ・何もしない は低い', async () => {
+  dist = await p.evaluate(b => {
+    const bot = eval(b), run = (m, n, base) => { const o = []; for (let i = 0; i < n; i++) { hs.dbg.seed(base + i * 7); hs.start(); o.push(bot(m, base * 31 + i)) } return o }
+    const TOP = hs.D.ranks[0].min
+    const st = a => { const sc = a.map(x => x.score).sort((x, y) => x - y), fl = a.map(x => x.floor).sort((x, y) => x - y); return { min: sc[0], med: sc[sc.length >> 1], max: sc[sc.length - 1], top: sc.filter(x => x >= TOP).length, n: sc.length, floorMed: fl[fl.length >> 1], roof: a.filter(x => x.roof).length, ranks: Object.entries(a.reduce((o, x) => (o[x.rank] = (o[x.rank] || 0) + 1, o), {})).map(e => e.join(':')).join(' ') } }
+    return { skilled: st(run('skilled', 20, 100)), skilledR: st(run('skilledR', 20, 100)), aim: st(run('aim', 10, 100)), spam: st(run('spam', 6, 300)), suka: st(run('suka', 6, 300)), never: st(run('never', 4, 500)) }
+  }, BOT)
+  const d = dist
+  expect(d.skilledR.top >= 4 && d.skilledR.top <= 12 && d.skilledR.med > d.skilled.med * 0.9 && d.spam.max < 20 && d.suka.max < d.skilledR.med && d.never.max === 0, JSON.stringify(d)); return d
+})
+await t('英語に切り替えると全部の文言が英語になる（ボタン・乗客・結果）', async () => {
+  const r = await run(() => {
+    hs.toTitle(); hs.setLang('en')
+    const title = document.querySelector('.logo').textContent, start = document.querySelector('#bStart').textContent
+    hs.dbg.seed(3); hs.start(); const intro = document.querySelector('#iName').textContent, btns = [...document.querySelectorAll('.fb .fn')].map(e => e.textContent).join(','), play = document.querySelector('#vPlay').innerText
+    hs.toResult(); hs.finishReveal(); const rank = document.querySelector('#rRank').textContent
+    const ja = /[぀-ヿ一-鿿]/.test(document.querySelector('#vResult').innerText + title + start + intro + btns + play)
+    return { title, start, intro, btns, rank, ja, floor: document.querySelector('#rFloor').textContent }
+  })
+  await p.screenshot({ path: ROOT + '/shots/result-en.png' })
+  await run(() => hs.setLang('ja'))
+  expect(/FART/.test(r.title) && r.start === 'Get on' && r.btns === 'Silent,Toot,Thunder' && r.rank && !r.ja && /Reached floor/.test(r.floor), JSON.stringify(r)); return r
+})
+await t('英語: Post on X も英語の点数・ハッシュタグで開く', async () => {
+  await run(() => { hs.setLang('en'); hs.toResult(); hs.finishReveal() })
+  const w = await run(() => { const r = hs.S.result; return ['Scored ' + r.score, r.rank.t.en, 'reached floor ' + r.floor] })
+  const r = await xCheck(p, 'hs', w, '#ElevatorFart', PUB); await run(() => hs.setLang('ja')); expect(r.label === 'Post on X', r.label); return r
+})
+await t('音: 鳴らしてもエラーが出ず、出来事の音・おならが鳴る（ボタンをクリックで出す）', async () => {
+  await run(() => hs.toTitle()); await p.click('#bStart'); await p.click('#bGo')
+  await run(() => { hs.dbg.pause(); hs.dbg.step(150); hs.dbg.toPeak(0.3); hs.dbg.render() })
+  await p.click('#f_bubo')
+  const r = await run(() => { hs.dbg.step(30); return { state: hs.Snd.ctx && hs.Snd.ctx.state, played: Object.keys(hs.Snd.played), rec: hs.S.rec.map(x => x.id + ':' + x.rating) } })
+  await p.waitForTimeout(500)
+  const lv = await run(() => hs.Snd.level())
+  await run(() => hs.Snd.setMute(true)); await p.waitForTimeout(150)
+  const muted = await run(() => hs.Snd.master.gain.value)
+  await run(() => hs.Snd.setMute(false))
+  expect(r.played.includes('ev:chime') && r.played.includes('fart') && r.rec.length === 1 && /bubo:(perfect|safe)/.test(r.rec[0]) && lv > 0.001 && muted === 0 && !p.errs.length, JSON.stringify({ ...r, lv, muted, errs: p.errs })); return { played: r.played.length, rec: r.rec, level: +lv.toFixed(3) }
+})
+await t('PC: 1・2・3 キーでも出せる', async () => {
+  await begin(26); await quiet(['coworker'])
+  await p.keyboard.press('Digit1'); await run(() => hs.dbg.step(12))
+  const r = await run(() => hs.S.rec.map(x => x.id))
+  expect(r.join() === 'suka', r.join()); return r
+})
+await t('全部の出来事の音が鳴る（9種）＋消臭・ボタン連打', async () => {
+  const r = await run(() => { for (const e of ['chime', 'phone', 'shake', 'laugh', 'baby', 'bark', 'cart', 'giggle', 'music']) hs.Snd.event(e, 1, 0.5); hs.Snd.sfx('spray'); hs.Snd.sfx('mash'); return Object.keys(hs.Snd.played).filter(k => k.startsWith('ev:')).length })
+  expect(r === 9 && !p.errs.length, r + ' ' + p.errs.join('|')); return r
+})
+await t('通しの最後までコンソールエラーなし', async () => { expect(p.errs.length === 0, p.errs.join('|')) })
+await p.close()
+
+// ---- 6サイズ × 全画面で一画面に収まる
+for (const [w, h, name0, en] of [...SIZES, [360, 640, 'small', 1], [667, 375, 'land-se', 1]]) {
+  const name = name0 + (en ? '-en' : '')
+  const q = await open(browser, { viewport: { width: w, height: h } })
+  if (en) await q.evaluate(() => hs.setLang('en'))
+  const views = {}
+  await q.waitForTimeout(300)
+  views.title = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-title.png` })
+  await q.click('#bHow'); views.how = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-how.png` }); await q.click('#bHowBack')
+  await q.click('#bStart'); await q.evaluate(() => { hs.dbg.pause(); hs.dbg.render() }); views.intro = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-intro.png` })
+  await q.click('#bGo')
+  await q.evaluate(() => { hs.dbg.seed(1); hs.dbg.step(150); hs.dbg.render() }); views.tutorial = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-play.png` })
+  const fbSize = await q.evaluate(() => [...document.querySelectorAll('.fb')].map(b => { const n = b.querySelector('.fn'), br = b.getBoundingClientRect(), nr = n.getBoundingClientRect(); return { h: Math.round(br.height), fit: nr.left >= br.left - 1 && nr.right <= br.right + 1 && nr.height < 30 } }))
+  await q.evaluate(() => { const e = hs.dbg.toPeak(-1.2); hs.dbg.render() }); views.warn = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-warn.png` })
+  await q.evaluate(() => { hs.dbg.toPeak(0.25); hs.fart('bubo'); hs.dbg.step(14); hs.dbg.render() }); views.fart = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-fart.png` })
+  await q.evaluate(() => { hs.dbg.step(120); hs.S.smell = 1.1; hs.S.sniff = 0.8; hs.S.sniffStep = 2; hs.dbg.step(30); hs.dbg.render() }); views.smell = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-smell.png` })
+  await q.evaluate(() => { hs.smellBust('sniff'); hs.dbg.step(25); hs.dbg.render() }); views.smellBust = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-smellbust.png` })
+  await q.evaluate(() => { hs.dbg.step(200); hs.S.evs = []; hs.S.planAt = 1e9; hs.S.cd.bubo = 0; hs.fart('bubo'); hs.dbg.step(50); hs.dbg.render() }); views.busted = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-busted.png` })
+  await q.evaluate(() => { hs.S.lives = 1; hs.S.cd.bubo = 0; hs.S.snz = null; hs.fart('bubo'); hs.dbg.step(140); hs.dbg.render() }); views.kicked = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-kicked.png` })
+  await q.evaluate(() => { let n = 0; while (hs.S.mode !== 'result' && n++ < 600) hs.dbg.step(1); hs.finishReveal(); hs.dbg.step(30); hs.dbg.render() }); await q.waitForTimeout(450); views.result = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-result.png` })
+  const ol = await oneLine(q); await t(`${name}: 保存・Xボタンの文字が1行`, async () => { expect(!ol.length, ol.join(',')) })
+  for (const [v, r] of Object.entries(views)) await t(`一画面に収まる ${name} ${w}x${h} ${v}`, async () => { expect(!r.over.length, JSON.stringify(r)) })
+  await t(`${name}: おならボタンの文字が1行で収まり、押しやすい大きさ（高さ56px以上）`, async () => {
+    const r = fbSize
+    expect(r.every(x => x.fit && x.h >= 56), JSON.stringify(r)); return r.map(x => x.h).join(',')
+  })
+  await t(`${name}: はみ出し・エラーなし`, async () => { const o = await overflow(q); expect(o.sw <= o.W && !o.bad.length && !q.errs.length, JSON.stringify(o) + q.errs.join('|')) })
+  await t(`${name}: もう一回ですぐ遊べる`, async () => { await q.click('#bAgain'); const m = await q.evaluate(() => hs.S.mode); expect(m === 'intro', m); return m })
+  await q.close()
+}
+await browser.close()
+
+// ---- WebKit（iPhone 相当）でタッチの通し
+const wb = await webkit.launch(), wp = await open(wb, { isMobile: true, hasTouch: true, deviceScaleFactor: 2 })
+await t('WebKit: 2本指の touchmove を止める', async () => {
+  const r = await wp.evaluate(() => { const e = new Event('touchmove', { cancelable: true, bubbles: true }); Object.defineProperty(e, 'touches', { value: [{}, {}] }); document.body.dispatchEvent(e); return e.defaultPrevented })
+  expect(r, r)
+})
+await t('WebKit: タップで始めて、山で ブボボボッ をタップすると通る（スマホの案内文）', async () => {
+  await wp.tap('#bStart'); await wp.tap('#bGo')
+  const hint = await wp.evaluate(() => { hs.dbg.pause(); hs.dbg.step(150); hs.dbg.render(); return document.querySelector('#hint').textContent })
+  await wp.evaluate(() => { hs.dbg.toPeak(0.3); hs.dbg.render() })
+  await wp.tap('#f_bubo')
+  const r = await wp.evaluate(() => { hs.dbg.step(20); hs.dbg.render(); return hs.S.rec.map(x => x.id + ':' + x.rating) })
+  await wp.screenshot({ path: ROOT + '/shots/webkit-fart.png' })
+  expect(/ボタンでおならを出す/.test(hint) && r.length === 1 && /bubo:(perfect|safe)/.test(r[0]), hint + ' ' + JSON.stringify(r)); return { hint, r }
+})
+await t('WebKit: 結果まで通してエラーなし', async () => {
+  const r = await wp.evaluate(b => { hs.dbg.seed(8); hs.start(); return eval(b)('skilledR', 3).score }, BOT)
+  await wp.evaluate(() => { hs.finishReveal(); hs.dbg.render() }); await wp.waitForTimeout(400); await wp.screenshot({ path: ROOT + '/shots/webkit-result.png' })
+  expect(r >= 30 && wp.errs.length === 0, r + ' ' + wp.errs.join('|')); return { score: r }
+})
+await wb.close()
+
+// ---- fps（GPU 描画で実時間に遊ばせて測る）
+if (process.env.FPS) {
+  const gb = await chromium.launch({ channel: 'chromium', args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] })
+  for (const [w, h] of [[390, 844], [1440, 900]]) {
+    const g = await open(gb, { viewport: { width: w, height: h } })
+    await g.evaluate(() => { hs.start(); hs.beginCount() }); await g.waitForTimeout(6000)
+    results.push(`info fps ${w}x${h}: game=${await g.evaluate(() => hs.S.fps)}`)
+    await g.close()
+  }
+  await gb.close()
+}
+server.kill()
+console.log(results.join('\n'))
+console.log(`\n${pass} passed, ${fail} failed`)
+process.exit(fail ? 1 : 0)
