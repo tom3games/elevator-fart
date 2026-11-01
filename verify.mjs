@@ -575,6 +575,84 @@ await t('全部の出来事の音が鳴る（9種）＋消臭・ボタン連打'
   const r = await run(() => { for (const e of ['chime', 'phone', 'shake', 'laugh', 'baby', 'bark', 'cart', 'giggle', 'music']) hs.Snd.event(e, 1, 0.5); hs.Snd.sfx('spray'); hs.Snd.sfx('mash'); return Object.keys(hs.Snd.played).filter(k => k.startsWith('ev:')).length })
   expect(r === 9 && !p.errs.length, r + ' ' + p.errs.join('|')); return r
 })
+// ---- 音の作り込み（鳴らさずに、呼ばれ方と中身の散らばりで固定する）
+await t('おならの音: 毎回 長さ・音程・震え・ぶつ切れの数が違う（3種×15回で同じ音なし）', async () => {
+  const r = await run(() => {
+    const out = {}
+    for (const k of ['suka', 'pu', 'bubo']) {
+      const L = []; for (let i = 0; i < 15; i++) L.push(hs.Snd.fart(k, 'plain'))
+      const sig = L.map(p => [p.dur.toFixed(3), p.f0.toFixed(1), p.chops, (p.vibR || 0).toFixed(2), p.flap.toFixed(2)].join('/'))
+      const cv = a => { const m = a.reduce((x, y) => x + y, 0) / a.length; return Math.sqrt(a.reduce((x, y) => x + (y - m) ** 2, 0) / a.length) / m }
+      out[k] = { uniq: new Set(sig).size, sameNext: sig.some((x, i) => i && x === sig[i - 1]), cvDur: +cv(L.map(p => p.dur)).toFixed(2), cvF0: +cv(L.map(p => p.f0)).toFixed(2), chops: [...new Set(L.map(p => p.chops))].sort((a, b) => a - b).join(',') }
+    }
+    return out
+  })
+  for (const k in r) expect(r[k].uniq === 15 && !r[k].sameNext && r[k].cvDur > 0.08 && r[k].cvF0 > 0.06, k + ' ' + JSON.stringify(r[k]))
+  expect(r.bubo.chops.split(',').length >= 4 && +r.bubo.chops.split(',')[0] >= 3, 'ブボボボッのぶつ切れ ' + r.bubo.chops)
+  return r
+})
+await t('おならの音: かき消せた=こもって小さく / バレた=狭い箱の残響 / すかしっぺ=空気だけ', async () => {
+  await begin(31); await quiet(['coworker', 'bucho'])
+  const ok = await run(() => { hs.S.planAt = hs.S.st; const e = hs.dbg.toPeak(0.3); hs.S.cd.bubo = 0; hs.S.snz = null; hs.fart('bubo'); hs.dbg.step(12); const L = hs.S.rec[hs.S.rec.length - 1]; return { rating: L.rating, how: hs.Snd.fartLog[hs.Snd.fartLog.length - 1].how, ev: e && e.type } })
+  const bad = await run(() => { hs.S.evs = []; hs.S.planAt = 1e9; hs.S.cd.bubo = 0; hs.S.snz = null; const n0 = hs.Snd.played.echo || 0; hs.fart('bubo'); hs.dbg.step(12); const L = hs.S.rec[hs.S.rec.length - 1]; return { rating: L.rating, how: hs.Snd.fartLog[hs.Snd.fartLog.length - 1].how, echo: (hs.Snd.played.echo || 0) - n0 } })
+  const suka = await run(() => { hs.S.cd.suka = 0; hs.S.snz = null; hs.S.smell = 0; hs.S.sniff = 0; hs.fart('suka'); hs.dbg.step(12); const p = hs.Snd.fartLog[hs.Snd.fartLog.length - 1]; return { how: p.how, kind: p.kind, f0: Math.round(p.f0) } })
+  const route = await run(() => ({ muf: hs.Snd.muf.frequency.value, mufGain: hs.Snd.muf.context ? 1 : 0, box: !!hs.Snd.box.buffer, boxLen: +(hs.Snd.box.buffer.duration).toFixed(2) }))
+  expect(/perfect|safe/.test(ok.rating) && ok.how === 'masked' && bad.rating === 'busted' && bad.how === 'busted' && bad.echo === 1 && suka.how === 'plain' && suka.kind === 'suka' && suka.f0 > 400 && route.muf < 500 && route.box && route.boxLen < 0.6, JSON.stringify({ ok, bad, suka, route }))
+  return { ok: ok.how, bad: bad.how, suka: suka.how, muffle: route.muf + 'Hz', box: route.boxLen + 's' }
+})
+await t('BGM: 平常=ボサノバ（ギター・ビブラフォン）/ ざわざわ=音程と調子がずれる / 犯人探し=止まって心臓の音だけ', async () => {
+  const r = await run(() => {
+    const S = hs.Snd, out = {}
+    const bars = (ten, sour) => { S.tense = ten; S.sour = sour; S.detMax = 0; const g0 = S.played.gtr || 0, v0 = S.played.vib || 0, modes = new Set(); const d = []; for (let i = 0; i < 64; i++) { S.step = i; modes.add(S.p_quiet(i, S.now())); d.push(S.drag()) } return { modes: [...modes].join(), gtr: (S.played.gtr || 0) - g0, vib: (S.played.vib || 0) - v0, det: Math.round(S.detMax), dragSpread: +(Math.max(...d) - Math.min(...d)).toFixed(3) } }
+    const keep = S.track; S.track = 'quiet'
+    out.calm = bars(0, 0); out.zawa = bars(1, 0.8); out.hunt = bars(2, 1); out.back = bars(0, 0)
+    S.track = keep; S.tense = 0; S.sour = 0
+    return out
+  })
+  expect(r.calm.modes === 'bossa' && r.calm.gtr > 60 && r.calm.vib > 8 && r.calm.det === 0 && r.calm.dragSpread === 0, 'calm ' + JSON.stringify(r.calm))
+  expect(r.zawa.modes === 'sour' && r.zawa.gtr > 20 && r.zawa.det >= 10 && r.zawa.dragSpread > 0.02, 'zawa ' + JSON.stringify(r.zawa))
+  expect(r.hunt.modes === 'heart' && r.hunt.gtr === 0 && r.hunt.vib === 0, 'hunt ' + JSON.stringify(r.hunt))
+  expect(r.back.modes === 'bossa' && r.back.det === 0, 'back ' + JSON.stringify(r.back))
+  return r
+})
+await t('BGM: 遊びの中で 匂いがたまると少しずつずれ、犯人探しで心臓、落ち着くとボサノバに戻る', async () => {
+  await begin(33); await quiet(['coworker', 'bucho', 'nose'])
+  const r = await run(() => {
+    const S = hs.S, A = hs.D.run.air, log = {}
+    S.tut = 2; S.smell = (A.zawa + 0.08) * hs.D.run.bustAt / hs.sniffMult(); let n = 0
+    while (S.air < 1 && n++ < 600) hs.dbg.step(1)
+    const s0 = hs.Snd.sour; hs.dbg.step(60); const s1 = hs.Snd.sour; hs.dbg.step(120); log.zawa = { air: S.air, s0: +s0.toFixed(2), s1: +s1.toFixed(2), s2: +hs.Snd.sour.toFixed(2), tense: hs.Snd.tense }
+    S.smell = 0.75 * hs.D.run.bustAt / hs.sniffMult(); n = 0; while (S.air < 2 && n++ < 600) hs.dbg.step(1); hs.dbg.step(5)
+    log.hunt = { air: S.air, tense: hs.Snd.tense, mode: hs.Snd.p_quiet(0, hs.Snd.now()) }
+    S.smell = 0; n = 0; while (S.air > 0 && n++ < 1200) hs.dbg.step(1); hs.dbg.step(400)
+    log.calm = { air: S.air, tense: hs.Snd.tense, sour: +hs.Snd.sour.toFixed(3), mode: hs.Snd.p_quiet(0, hs.Snd.now()), want: hs.Snd.want }
+    return log
+  })
+  expect(r.zawa.air === 1 && r.zawa.s0 < r.zawa.s1 && r.zawa.s1 <= r.zawa.s2 + 0.01 && r.zawa.s2 > 0.2 && r.hunt.tense === 2 && r.hunt.mode === 'heart' && r.calm.tense === 0 && r.calm.sour === 0 && r.calm.mode === 'bossa' && r.calm.want === 'quiet', JSON.stringify(r))
+  return r
+})
+await t('内装: 1階=ふつうの箱 → 20階から木目と真鍮 → 40階から大理石と金（ドアが開いたところで変わる）', async () => {
+  await begin(35)
+  const r = await run(() => {
+    const out = [hs.interior()]
+    for (const f of [19, 25, 39, 50, 79]) { hs.S.evs = []; hs.S.planAt = 1e9; hs.dbg.floor(f); hs.S.stop = { t: 0 }; hs.dbg.step(200); out.push({ f, ...hs.interior() }) }
+    return out
+  })
+  const ids = r.map(x => x.wall).join('>')
+  expect(ids === 'morning>morning>boss>boss>date>date' && r.every(x => x.id === x.wall) && new Set(r.map(x => x.rail)).size === 3 && new Set(r.map(x => x.light)).size === 3, JSON.stringify(r))
+  return ids
+})
+await t('匂いのモヤ: たまると湧いて、抜けると消える。監視カメラの赤いランプが点滅する', async () => {
+  await begin(37); await quiet([])
+  const r = await run(() => {
+    const S = hs.S; S.smell = 0; hs.dbg.step(120); const none = hs.moyaN()
+    S.smell = 0.35; hs.dbg.step(120); const low = hs.moyaN(); S.smell = 1.0; hs.dbg.step(150); const high = hs.moyaN(), ln = hs.lineN()
+    S.smell = 0; hs.dbg.step(240); const gone = hs.moyaN() + hs.lineN()
+    const led = new Set(); for (let i = 0; i < 90; i++) { hs.dbg.step(1); led.add(hs.ledOn()) }
+    return { none, low, high, ln, gone, led: led.size }
+  })
+  expect(r.none === 0 && r.low >= 3 && r.high > r.low && r.ln > 0 && r.gone === 0 && r.led === 2, JSON.stringify(r)); return r
+})
 await t('ほかのバカゲー: 結果とタイトルの入口から一覧が開き、4本とも新しいタブ（noopener）で各ゲームへ', async () => {
   const want = ['sneeze-quiet', 'onara-jinro', 'nod-master', 'sushi-tower'].map(s => `https://tom3games.github.io/${s}/`)
   const list = () => run(() => [...document.querySelectorAll('#moreL a')].map(a => ({ href: a.href, target: a.target, rel: a.rel, img: a.querySelector('img').getAttribute('src'), name: a.querySelector('b').textContent, sub: a.querySelector('span').textContent })))

@@ -4,11 +4,11 @@ import { chromium } from 'playwright'
 import { launch } from './_mute.mjs'
 import { spawn } from 'node:child_process'
 const ROOT = import.meta.dirname
-const server = spawn(process.execPath, ['server.mjs'], { cwd: ROOT, env: { ...process.env, PORT: '5419' } })
+const server = spawn(process.execPath, ['server.mjs'], { cwd: ROOT, env: { ...process.env, PORT: '5514' } })
 await new Promise(r => setTimeout(r, 400))
 const b = await launch(chromium)
 const p = await b.newPage({ viewport: { width: 1200, height: 630 }, locale: 'ja-JP' })
-await p.goto('http://localhost:5419/'); await p.waitForFunction(() => window.__hsReady)
+await p.goto('http://localhost:5514/'); await p.waitForFunction(() => window.__hsReady)
 await p.evaluate(() => document.fonts.ready)
 await p.evaluate(() => {
   hs.dbg.pause(); hs.dbg.seed(21); hs.start(); hs.beginCount(); hs.dbg.step(150); hs.S.tut = 2; hs.S.evs = []; hs.S.planAt = 1e9

@@ -32,8 +32,8 @@ const L2 = pair => pair[S.lang === 'ja' ? 0 : 1]
 
 // ---------- 音（WebAudio だけで鳴らす）
 const Snd = {
-  ctx: null, muted: store.get('hs.mute') === '1', next: 0, step: 0, track: null, want: null, switchAt: 0, played: {},
-  TEMPO: { title: 116, quiet: 96, happy: 132, sad: 70 },
+  ctx: null, muted: store.get('hs.mute') === '1', next: 0, step: 0, track: null, want: null, switchAt: 0, played: {}, fartLog: [], sour: 0, bgmLog: [],
+  TEMPO: { title: 116, quiet: 126, happy: 132, sad: 70 },
   init() {
     if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return }
     const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return
@@ -46,6 +46,13 @@ const Snd = {
       this.echo = c.createGain(); const dl = c.createDelay(1); dl.delayTime.value = 0.09; const fb = c.createGain(); fb.gain.value = 0.5
       const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1800; const wet = c.createGain(); wet.gain.value = 0.5
       this.echo.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(lp); lp.connect(wet); wet.connect(this.master)
+      // 狭い箱の残響（音でバレた時だけ通す）。金属の壁で短く跳ね返る
+      const irL = Math.floor(c.sampleRate * 0.42), ir = c.createBuffer(2, irL, c.sampleRate)
+      for (let ch = 0; ch < 2; ch++) { const b = ir.getChannelData(ch); for (let i = 0; i < irL; i++) { const tt = i / c.sampleRate; b[i] = (Math.random() * 2 - 1) * Math.exp(-tt / 0.075) * (1 + 0.6 * Math.sin(tt * 2 * Math.PI * 830)) } for (const [d, a] of [[0.006, 0.8], [0.011, -0.6], [0.017, 0.5], [0.023, -0.35]]) b[Math.floor(d * c.sampleRate) + ch * 7] += a }
+      this.box = c.createConvolver(); this.box.buffer = ir; const bw = c.createGain(); bw.gain.value = 0.85; this.box.connect(bw); bw.connect(this.master)
+      // かき消した時: こもらせて小さく（チャイム等の裏でかすかに）
+      this.muf = c.createBiquadFilter(); this.muf.type = 'lowpass'; this.muf.frequency.value = 380; this.muf.Q.value = 0.5; const mg = c.createGain(); mg.gain.value = 0.32; this.muf.connect(mg); mg.connect(this.master)
+      this.half = c.createBiquadFilter(); this.half.type = 'lowpass'; this.half.frequency.value = 1100; const hg = c.createGain(); hg.gain.value = 0.62; this.half.connect(hg); hg.connect(this.master)
       const len = c.sampleRate * 2; this.noiseBuf = c.createBuffer(1, len, c.sampleRate)
       const d = this.noiseBuf.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1
       if (this.want) { const w = this.want; this.want = null; this.setTrack(w) }
@@ -117,7 +124,7 @@ const Snd = {
     if (!this.track || this.switchAt) return
     const spb = 60 / this.TEMPO[this.track] / 4
     if (this.next < c.currentTime) this.next = c.currentTime + 0.05
-    while (this.next < c.currentTime + 0.25) { this['p_' + this.track](this.step, this.next); this.next += spb; this.step++ }
+    while (this.next < c.currentTime + 0.25) { this['p_' + this.track](this.step, this.next); this.next += spb * this.drag(); this.step++ }
   },
   pluck(n, t, dur = 0.09, vol = 0.07) { this.tone(this.mtof(n), t, dur, 'triangle', vol, this.bgm) },
   // タイトル: 抜き足差し足のつま先ジャズ（Em）
@@ -131,26 +138,70 @@ const Snd = {
       [69, -1, 72, -1, 74, -1, 75, 76, -1, -1, 69, -1, -1, -1, -1, -1], [71, -1, -1, 70, -1, -1, 69, -1, 67, -1, 64, -1, 63, -1, 64, -1]][bar]
     if (m[s] > 0) { this.pluck(m[s] + 12, t, 0.08, 0.06); this.tone(this.mtof(m[s]), t, 0.1, 'square', 0.018, this.bgm) }
   },
-  // プレイ: のんきなエレベーター音楽（ボサノバ）
+  // プレイ: エレベーターのボサノバ（ギターのコード・ベース・シェイカーとリム・ビブラフォン）
+  // 空気がざわつくほど sour（0..1）が上がり、音程が狂ってテンポがよれる。犯人探しで止まって心臓の音だけ
+  BOSSA: {
+    ch: [[57, 60, 64, 65], [57, 60, 64, 67], [55, 58, 62, 65], [58, 62, 64, 67], [55, 60, 64, 67], [57, 60, 63, 66], [55, 58, 62, 65], [58, 62, 64, 67]],
+    root: [41, 41, 43, 36, 45, 38, 43, 36],
+    gtr: [[0, 3, 6, 10, 13], [2, 6, 9, 12]],
+    mel: [[[0, 76, 4], [6, 74, 3], [10, 72, 6]], [[0, 69, 8], [12, 72, 4]], [[0, 74, 4], [6, 77, 3], [10, 74, 3], [14, 70, 2]], [[0, 72, 9], [10, 70, 2], [12, 69, 4]],
+      [[0, 72, 4], [6, 76, 3], [10, 79, 6]], [[0, 78, 4], [6, 75, 3], [10, 72, 6]], [[0, 70, 4], [6, 74, 3], [10, 77, 3], [14, 76, 2]], [[0, 74, 10], [12, 72, 4]]],
+  },
+  // テンポのよれ（sour が高いほど1拍ごとに伸び縮み）
+  drag() { const q = this.track === 'quiet' ? this.sour : 0; return q ? 1 + q * (0.07 * Math.sin(this.step * 0.37) + (Math.random() - 0.5) * 0.1) : 1 },
+  // 音程の狂い（セント）。全体のうねり＋音ごとのばらつき
+  det() { const q = this.sour; if (!q) return 0; const c = q * (Math.sin(this.step * 0.13) * 32 + (Math.random() - 0.5) * 46); this.detMax = Math.max(this.detMax || 0, Math.abs(c)); return c },
+  hz(m) { return this.mtof(m) * Math.pow(2, this.det() / 1200) },
+  // ガットギター風: のこぎり＋三角を、閉じていくローパスに通す
+  gtr(f, t, vol, dur = 0.55) {
+    this.mark('gtr'); if (!this.ctx) return; const c = this.ctx, o = c.createOscillator(), o2 = c.createOscillator(), lp = c.createBiquadFilter(), g = c.createGain()
+    o.type = 'sawtooth'; o2.type = 'triangle'; o.frequency.value = f; o2.frequency.value = f * 1.002
+    lp.type = 'lowpass'; lp.Q.value = 1.4; lp.frequency.setValueAtTime(2600, t); lp.frequency.exponentialRampToValueAtTime(520, t + 0.22)
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.005); g.gain.exponentialRampToValueAtTime(vol * 0.35, t + 0.12); g.gain.exponentialRampToValueAtTime(0.0001, t + dur)
+    o.connect(lp); o2.connect(lp); lp.connect(g); g.connect(this.bgm); o.start(t); o2.start(t); o.stop(t + dur + 0.02); o2.stop(t + dur + 0.02)
+  },
+  // ビブラフォン風: サイン＋4倍音、ゆるいトレモロ
+  vib(f, t, dur, vol) {
+    this.mark('vib'); if (!this.ctx) return; const c = this.ctx, o = c.createOscillator(), o2 = c.createOscillator(), g = c.createGain(), g2 = c.createGain(), tr = c.createOscillator(), tg = c.createGain()
+    o.frequency.value = f; o2.frequency.value = f * 4; g2.gain.value = 0.12; tr.frequency.value = 5.2; tg.gain.value = vol * 0.25
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.01); g.gain.exponentialRampToValueAtTime(vol * 0.5, t + 0.15); g.gain.exponentialRampToValueAtTime(0.0001, t + dur)
+    tr.connect(tg); tg.connect(g.gain); o.connect(g); o2.connect(g2); g2.connect(g); g.connect(this.bgm)
+    for (const x of [o, o2, tr]) { x.start(t); x.stop(t + dur + 0.02) }
+  },
   p_quiet(i, t) {
-    const bar = Math.floor(i / 16) % 4, s = i % 16, ten = this.tense || 0
-    const ch = [[65, 69, 72, 76], [64, 67, 71, 74], [62, 65, 69, 72], [67, 71, 74, 77]][bar], root = [41, 40, 38, 43][bar]
-    // 匂いがたまると不穏に: ざわざわ=低い半音のうなりとひそひそ声、犯人探し=心臓の音でメロディが消える
-    if (ten >= 1) {
-      if (s === 0) this.tone(this.mtof(root + 13), t, 1.1, 'sawtooth', 0.012, this.bgm)
-      if ((s === 5 || s === 13) && Math.random() < 0.6) this.noise(t, 0.12, 0.03, 3200, 'bandpass', this.bgm, 4)
-    }
+    const ten = this.tense || 0, q = this.sour || 0, s = i % 16, s32 = i % 32, bar = Math.floor(i / 16) % 8, B = this.BOSSA
+    let mode
     if (ten >= 2) {
-      if (s === 0 || s === 3 || s === 8 || s === 11) this.tone(s % 8 === 0 ? 62 : 55, t, 0.14, 'sine', 0.42, this.bgm, 40)
-      return
+      // 犯人探し: ボサノバは止まって心臓の音だけ（ドッ…クン）
+      mode = 'heart'
+      if (s === 0 || s === 3 || s === 8 || s === 11) { const k = s % 8 === 0; this.tone(k ? 62 : 52, t, 0.16, 'sine', k ? 0.5 : 0.36, this.bgm, 38); this.noise(t, 0.05, k ? 0.05 : 0.03, 180, 'lowpass', this.bgm) }
+    } else {
+      mode = q > 0.05 ? 'sour' : 'bossa'
+      // 調子がずれると、ところどころ音が抜ける
+      const drop = () => q > 0.05 && Math.random() < q * 0.3
+      const ch = B.ch[bar], root = B.root[bar]
+      // ベース（親指）: 1拍目に根音、3拍目に5度、その前に食い気味の音
+      if (s === 0) this.tone(this.hz(root), t, 0.42, 'sine', 0.24, this.bgm)
+      if (s === 6) this.tone(this.hz(root + 7), t, 0.18, 'sine', 0.12, this.bgm)
+      if (s === 8) this.tone(this.hz(root + 7), t, 0.4, 'sine', 0.2, this.bgm)
+      if (s === 14) this.tone(this.hz(root + (bar % 2 ? 0 : 12)), t, 0.16, 'sine', 0.1, this.bgm)
+      // ギターのコード（ボサノバの刻み・2小節で1周）。ジャラッと少しずらして鳴らす
+      if (B.gtr[Math.floor(s32 / 16)].includes(s) && !drop()) ch.forEach((n, k) => this.gtr(this.hz(n), t + k * 0.011, 0.028, 0.42 + (s === 0 ? 0.2 : 0)))
+      // パーカッション: シェイカー（16分）とリムショット
+      this.noise(t, 0.03, [0.016, 0.006, 0.01, 0.006][s % 4], 7200, 'highpass', this.bgm)
+      if ([0, 3, 6, 10, 13, 18, 22, 26].includes(s32)) { this.noise(t, 0.025, 0.05, 2200, 'bandpass', this.bgm, 4); this.tone(1700, t, 0.02, 'triangle', 0.02, this.bgm) }
+      if (s === 0 || s === 8) this.tone(95, t, 0.12, 'sine', 0.16, this.bgm, 50)
+      // メロディ（ビブラフォン）
+      const m = B.mel[bar].find(x => x[0] === s)
+      if (m && !drop()) this.vib(this.hz(m[1]), t, m[2] * 0.12 + 0.25, 0.05 * (1 - 0.4 * q))
+      // ざわざわ: 低い半音のうなりとひそひそ声
+      if (ten >= 1) {
+        if (s === 0) this.tone(this.mtof(root + 13), t, 1.1, 'sawtooth', 0.01, this.bgm)
+        if ((s === 5 || s === 13) && Math.random() < 0.6) this.noise(t, 0.12, 0.03, 3200, 'bandpass', this.bgm, 4)
+      }
     }
-    if (s === 0 || s === 10) this.tone(this.mtof(root), t, 0.3, 'sine', 0.22, this.bgm)
-    if (s === 6 || s === 14) this.tone(this.mtof(root + 7), t, 0.22, 'sine', 0.14, this.bgm)
-    if ([0, 3, 6, 10, 12].includes(s)) for (const n of ch) this.tone(this.mtof(n), t, 0.16, 'triangle', 0.018, this.bgm)
-    if (s % 2 === 0) this.noise(t, 0.02, 0.012, 6000, 'highpass', this.bgm)
-    const mel = [[76, -1, -1, 77, -1, 76, -1, -1, 72, -1, -1, -1, 74, -1, -1, -1], [74, -1, -1, 72, -1, 71, -1, -1, 67, -1, -1, -1, -1, -1, -1, -1],
-      [72, -1, -1, 74, -1, 76, -1, -1, 77, -1, 76, -1, 74, -1, -1, -1], [74, -1, -1, -1, 71, -1, -1, -1, 67, -1, 69, -1, 71, -1, -1, -1]][bar]
-    if (mel[s] > 0) this.tone(this.mtof(mel[s]), t, 0.3, 'sine', ten >= 1 ? 0.015 : 0.035, this.bgm)
+    if (s === 0) { this.mark('q:' + mode); this.bgmLog.push(mode); if (this.bgmLog.length > 40) this.bgmLog.shift() }
+    return mode
   },
   p_happy(i, t) {
     const bar = Math.floor(i / 16) % 4, s = i % 16, root = [48, 45, 41, 43][bar]
@@ -171,19 +222,75 @@ const Snd = {
   },
   // おなかが鳴る
   growl(v = 1) { if (!this.ctx) return; const t = this.now(); this.mark('growl'); this.rumble(t, 0.5, 0.12 * v, 70, 110, 11); this.noise(t, 0.45, 0.06 * v, 260, 'lowpass') },
-  // おなら。big=バレた・暴発、small=かき消した
-  fart(v, echo, big, small) {
-    if (!this.ctx) return; const t = this.now(); this.mark('fart'); if (echo) this.mark('echo')
-    const outs = echo ? [this.master, this.echo] : [this.master]
-    for (const o of outs) {
-      if (small) { this.noise(t, 0.18, 0.22 * v, 900, 'bandpass', o, 1.5); this.rumble(t, 0.16, 0.25 * v, 150, 120, 30, o) }
-      else {
-        const d = big ? 1.1 : 0.55
-        this.rumble(t, d, 0.55 * v, big ? 62 : 88, big ? 48 : 70, big ? 26 : 34, o)
-        this.noise(t, d * 0.9, 0.18 * v, 380, 'lowpass', o)
-        if (big) { this.rumble(t + d, 0.22, 0.4 * v, 120, 180, 40, o); this.noise(t + d + 0.18, 0.12, 0.12 * v, 1100, 'bandpass', o, 2) }
-      }
+  // おなら。層は 空気の破裂（ノイズのバースト）＋尻の共鳴（下がりながら震える低音）＋終わりのしぼみ（ぷすっ）
+  // kind: suka=すかしっぺ（ほぼ空気のスー…）/ pu=ぷっ / bubo=ブボボボッ（ぶつ切れの連打）
+  // how: plain=ふつう / masked=かき消せた（こもって小さく）/ half=半分かき消せた / busted=バレた（狭い箱の残響）
+  // 長さ・音程・震え方・ぶつ切れの数は毎回ランダム。直前と似すぎたら振り直す
+  fartRoll(kind) {
+    const R = Math.random, r = (a, b) => a + R() * (b - a)
+    if (kind === 'suka') return { kind, dur: r(0.7, 1.5), f0: r(520, 950), f1: r(260, 520), flap: r(4, 11), flapD: r(0.15, 0.45), chops: 1, vibR: 0, vibD: 0, drop: 0, tail: R() < 0.55 }
+    if (kind === 'pu') return { kind, dur: r(0.08, 0.24), f0: r(115, 215), drop: r(0.55, 0.85), vibR: r(7, 18), vibR2: r(5, 20), vibD: r(0.03, 0.11), flap: r(26, 48), flapD: r(0.35, 0.6), chops: R() < 0.3 ? 2 : 1, tail: R() < 0.7 }
+    return { kind, dur: r(0.75, 1.45), f0: r(56, 98), drop: r(0.42, 0.75), vibR: r(4, 13), vibR2: r(3, 17), vibD: r(0.05, 0.2), flap: r(17, 36), flapD: r(0.35, 0.65), chops: 3 + Math.floor(R() * 7), tail: R() < 0.85, long: R() < 0.5 }
+  },
+  fart(kind = 'bubo', how = 'plain', v = 1) {
+    if (typeof kind !== 'string') kind = 'bubo'
+    let p = this.fartRoll(kind)
+    const last = this.fartLog[this.fartLog.length - 1]
+    for (let k = 0; k < 4 && last && last.kind === kind && last.chops === p.chops && Math.abs(last.f0 - p.f0) / p.f0 < 0.06 && Math.abs(last.dur - p.dur) / p.dur < 0.12; k++) p = this.fartRoll(kind)
+    p.how = how; this.fartLog.push(p); if (this.fartLog.length > 60) this.fartLog.shift()
+    this.mark('fart'); this.mark('fart:' + kind); this.mark('fart:' + how); if (how === 'busted') this.mark('echo')
+    if (!this.ctx) return p
+    const c = this.ctx, t = c.currentTime + 0.005, out = c.createGain(); out.gain.value = v
+    if (how === 'masked') out.connect(this.muf)
+    else if (how === 'half') out.connect(this.half)
+    else { out.connect(this.master); if (how === 'busted') { out.connect(this.box); out.connect(this.echo) } }
+    const R = Math.random
+    if (kind === 'suka') {
+      // ほぼ空気: 帯域ノイズがゆっくり下がり、弱くゆれる
+      const s = c.createBufferSource(), bp = c.createBiquadFilter(), g = c.createGain(), am = c.createGain(), lfo = c.createOscillator(), lg = c.createGain()
+      s.buffer = this.noiseBuf; s.loop = true; bp.type = 'bandpass'; bp.Q.value = 1.6
+      bp.frequency.setValueAtTime(p.f0, t); bp.frequency.exponentialRampToValueAtTime(p.f1, t + p.dur)
+      lfo.frequency.setValueAtTime(p.flap, t); lfo.frequency.linearRampToValueAtTime(p.flap * 0.6, t + p.dur); lg.gain.value = p.flapD * 0.5; am.gain.value = 1 - p.flapD * 0.5
+      lfo.connect(lg); lg.connect(am.gain)
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.06, t + 0.12); g.gain.setValueAtTime(0.06, t + p.dur * 0.6); g.gain.exponentialRampToValueAtTime(0.0001, t + p.dur)
+      s.connect(bp); bp.connect(am); am.connect(g); g.connect(out); s.start(t, R()); lfo.start(t); s.stop(t + p.dur + 0.05); lfo.stop(t + p.dur + 0.05)
+      if (p.tail) this.noise(t + p.dur * 0.88, 0.07, 0.03, 1900, 'bandpass', out, 3)
+      return p
     }
+    const big = kind === 'bubo'
+    // 空気の破裂
+    this.noise(t, 0.04, (big ? 0.5 : 0.28), 560 + R() * 300, 'bandpass', out, 0.9)
+    // ぶつ切れ: 長さをばらして並べる（最後だけ長く伸ばすこともある）
+    const n = p.chops, w = Array.from({ length: n }, (_, k) => (0.6 + R() * 0.8) * (p.long && k === n - 1 ? 2.2 : 1)), ws = w.reduce((a, b) => a + b, 0)
+    let k0 = t; p.segs = []
+    for (let k = 0; k < n; k++) {
+      const gap = n > 1 ? 0.008 + R() * 0.04 : 0, d = Math.max(0.04, p.dur * w[k] / ws - gap)
+      const f = p.f0 * (1 - p.drop * 0.6 * k / Math.max(1, n - 1)) * (0.92 + R() * 0.16)
+      const vol = (big ? 0.5 : 0.24) * (k === 0 ? 1 : 0.65 + R() * 0.35)
+      this.fartSeg(k0, d, f, f * (1 - p.drop * (0.4 + R() * 0.3)), p, vol, out); p.segs.push(+d.toFixed(3))
+      k0 += d + gap
+    }
+    // 終わりのしぼみ（ぷすっ）
+    if (p.tail) { this.noise(k0 - 0.01, 0.06, big ? 0.12 : 0.07, 1700 + R() * 900, 'bandpass', out, 3); this.tone(240 + R() * 120, k0 - 0.01, 0.06, 'sine', big ? 0.08 : 0.05, out, 600 + R() * 300) }
+    p.total = +(k0 - t).toFixed(3)
+    return p
+  },
+  // 尻の共鳴 1つ分: 下がる低音にビブラート（速さと深さが途中で変わる）、唇のはためき（AM）をかける
+  fartSeg(t, d, f1, f2, p, vol, dest) {
+    const c = this.ctx, o = c.createOscillator(), o2 = c.createOscillator(), vib = c.createOscillator(), vg = c.createGain(), flap = c.createOscillator(), fg = c.createGain(), am = c.createGain(), lp = c.createBiquadFilter(), g = c.createGain()
+    o.type = 'sawtooth'; o2.type = 'square'; const og2 = c.createGain(); og2.gain.value = 0.35
+    for (const x of [o, o2]) { x.frequency.setValueAtTime(f1 * 1.1, t); x.frequency.linearRampToValueAtTime(f1, t + d * 0.15); x.frequency.exponentialRampToValueAtTime(Math.max(25, f2), t + d) }
+    vib.frequency.setValueAtTime(p.vibR, t); vib.frequency.linearRampToValueAtTime(p.vibR2, t + d)
+    vg.gain.setValueAtTime(f1 * p.vibD * 0.4, t); vg.gain.linearRampToValueAtTime(f1 * p.vibD, t + d)
+    vib.connect(vg); vg.connect(o.frequency); vg.connect(o2.frequency)
+    flap.type = 'triangle'; flap.frequency.setValueAtTime(p.flap * (0.9 + Math.random() * 0.2), t); flap.frequency.linearRampToValueAtTime(p.flap * 0.65, t + d)
+    fg.gain.value = p.flapD * 0.5; am.gain.value = 1 - p.flapD * 0.5; flap.connect(fg); fg.connect(am.gain)
+    lp.type = 'lowpass'; lp.Q.value = 5; lp.frequency.setValueAtTime(Math.min(1400, f1 * 9), t); lp.frequency.exponentialRampToValueAtTime(Math.max(160, f1 * 3.2), t + d)
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.012); g.gain.setValueAtTime(vol, t + d * 0.7); g.gain.exponentialRampToValueAtTime(0.0001, t + d)
+    o.connect(lp); o2.connect(og2); og2.connect(lp); lp.connect(am); am.connect(g); g.connect(dest)
+    // 息のざらつき
+    this.noise(t, d, vol * 0.25, f1 * 3, 'bandpass', g, 1.2)
+    for (const x of [o, o2, vib, flap]) { x.start(t); x.stop(t + d + 0.03) }
   },
   cough() { if (!this.ctx) return; const t = this.now(); this.mark('cough'); for (const d of [0, 0.22]) { this.noise(t + d, 0.16, 0.6, 900, 'bandpass', null, 1.2); this.voice(170, t + d, 0.16, 0.25, 700, null, 120) } },
   event(type, w, p, fake) {
@@ -322,47 +429,137 @@ function canvasTex(w, h, draw, rep) {
 // 床 x:-1.3..1.3 / z:-2.0..3.3。ドアはカメラの後ろ（z=2.7）。奥の壁の鏡にドアが映る
 const CAR = { x: 1.3, zb: -2.0, zf: 3.3, h: 2.6 }
 const car = new THREE.Group(); scene.add(car)
-const wallM = new THREE.MeshPhongMaterial({ color: 0xb6bcc8, shininess: 60, specular: 0x555555 })
-const backM = new THREE.MeshPhongMaterial({ color: 0x8b919e, shininess: 40 })
+// 壁・奥の壁・天井は区画ごとに描き直すテクスチャ（ステンレス → 木目と真鍮 → 大理石と金）
+const wallTex = canvasTex(512, 256, () => {}), backTex = canvasTex(256, 256, () => {}), ceilTex = canvasTex(256, 256, () => {})
+const wallM = new THREE.MeshPhongMaterial({ map: wallTex, shininess: 60, specular: 0x555555 })
+const backM = new THREE.MeshPhongMaterial({ map: backTex, shininess: 40, specular: 0x333333 })
+const ceilM = new THREE.MeshLambertMaterial({ map: ceilTex, emissive: 0x6a6a6a, emissiveMap: ceilTex })
+const lightM = new THREE.MeshBasicMaterial({ color: 0xfff6e0 })
 const floorTex = canvasTex(256, 256, () => {}, [3, 5])
 const floorM = new THREE.MeshLambertMaterial({ map: floorTex })
-const railM = new THREE.MeshPhongMaterial({ color: 0xd8c48a, shininess: 80 })
+const railM = new THREE.MeshPhongMaterial({ color: 0xd8c48a, shininess: 90, specular: 0xffffff })
+// 大理石の筋（決まった種で描く）
+function marble(x, w, h, n, col) {
+  const r = mulberry(7); x.strokeStyle = col; x.lineCap = 'round'
+  for (let i = 0; i < n; i++) { x.lineWidth = 0.6 + r() * 2.2; x.beginPath(); let px = r() * w, py = r() * h; x.moveTo(px, py); for (let k = 0; k < 6; k++) { px += (r() - 0.3) * w * 0.18; py += (r() - 0.5) * h * 0.2; x.lineTo(px, py) } x.stroke() }
+}
+function woodGrain(x, w, h, base, seed) {
+  const r = mulberry(seed); x.fillStyle = base; x.fillRect(0, 0, w, h)
+  for (let y = 0; y < h; y += 2) { x.strokeStyle = r() < 0.5 ? 'rgba(30,14,4,.22)' : 'rgba(150,96,52,.18)'; x.lineWidth = 1 + r() * 1.5; x.beginPath(); const ph = r() * 9, a = 1 + r() * 3; for (let px = 0; px <= w; px += 16) x.lineTo(px, y + Math.sin(px / 40 + ph) * a + Math.sin(px / 9 + ph) * 0.6); x.stroke() }
+}
+const gold = (x, x0, y0, x1, y1, a = '#b8902f', b = '#f0d27a') => { const g = x.createLinearGradient(0, y0, 0, y1); g.addColorStop(0, b); g.addColorStop(0.5, a); g.addColorStop(1, b); x.fillStyle = g; x.fillRect(x0, y0, x1 - x0, y1 - y0) }
+// 区画ごとの壁（back=奥の壁）
+const WALLS = {
+  morning: (x, w, h, back) => {
+    const g = x.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#cfd4dc'); g.addColorStop(1, '#a9afb9'); x.fillStyle = g; x.fillRect(0, 0, w, h)
+    const r = mulberry(3); for (let i = 0; i < w; i++) { x.fillStyle = r() < 0.5 ? `rgba(255,255,255,${0.04 + r() * 0.08})` : `rgba(60,66,76,${0.03 + r() * 0.07})`; x.fillRect(i, 0, 1, h) }
+    const n = back ? 2 : 4; for (let i = 1; i < n; i++) { const px = Math.round(w * i / n); x.fillStyle = '#737985'; x.fillRect(px - 1, 0, 2, h); x.fillStyle = '#eef0f3'; x.fillRect(px + 1, 0, 1, h) }
+    x.fillStyle = '#8b919c'; x.fillRect(0, h * 0.9, w, h * 0.1); x.fillStyle = 'rgba(255,255,255,.25)'; x.fillRect(0, h * 0.9, w, 2)
+  },
+  boss: (x, w, h, back) => {
+    woodGrain(x, w, h, '#5e3a24', back ? 11 : 5)
+    const n = back ? 2 : 4
+    for (let i = 0; i < n; i++) { const x0 = w * i / n + 8, x1 = w * (i + 1) / n - 8; x.strokeStyle = 'rgba(20,8,2,.45)'; x.lineWidth = 3; x.strokeRect(x0, h * 0.08, x1 - x0, h * 0.42); x.strokeRect(x0, h * 0.6, x1 - x0, h * 0.26); x.strokeStyle = 'rgba(255,210,150,.18)'; x.lineWidth = 1; x.strokeRect(x0 + 3, h * 0.08 + 3, x1 - x0 - 6, h * 0.42 - 6) }
+    gold(x, 0, h * 0.535, w, h * 0.565); gold(x, 0, h * 0.89, w, h); gold(x, 0, 0, w, h * 0.025)
+  },
+  date: (x, w, h, back) => {
+    x.fillStyle = '#f5efe4'; x.fillRect(0, 0, w, h); marble(x, w, h, back ? 9 : 16, 'rgba(150,138,122,.32)'); marble(x, w, h, 4, 'rgba(205,160,70,.35)')
+    const n = back ? 2 : 4
+    for (let i = 0; i < n; i++) { const x0 = w * i / n + 10, x1 = w * (i + 1) / n - 10; x.strokeStyle = '#c99a2e'; x.lineWidth = 4; x.strokeRect(x0, h * 0.1, x1 - x0, h * 0.74); x.strokeStyle = '#f6e19a'; x.lineWidth = 1; x.strokeRect(x0 + 3, h * 0.1 + 3, x1 - x0 - 6, h * 0.74 - 6) }
+    gold(x, 0, 0, w, h * 0.05, '#c99a2e', '#ffe7a0'); gold(x, 0, h * 0.88, w, h, '#c99a2e', '#ffe7a0')
+  },
+}
+const CEILS = {
+  morning: (x, w, h) => { x.fillStyle = '#d9dce1'; x.fillRect(0, 0, w, h); x.strokeStyle = '#b4b9c1'; x.lineWidth = 2; for (let i = 0; i <= 4; i++) { x.beginPath(); x.moveTo(i * w / 4, 0); x.lineTo(i * w / 4, h); x.moveTo(0, i * h / 4); x.lineTo(w, i * h / 4); x.stroke() } },
+  boss: (x, w, h) => { woodGrain(x, w, h, '#3e2516', 9); x.strokeStyle = '#c9a043'; x.lineWidth = 4; for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) x.strokeRect(i * w / 3 + 10, j * h / 3 + 10, w / 3 - 20, h / 3 - 20) },
+  date: (x, w, h) => { gold(x, 0, 0, w, h, '#e6c870', '#fff0c0'); x.strokeStyle = 'rgba(160,110,30,.5)'; x.lineWidth = 3; for (let i = 0; i < 3; i++) { x.beginPath(); x.arc(w / 2, h / 2, 30 + i * 36, 0, 7); x.stroke() } },
+}
 const FLOORS = {
   morning: (x, w, h) => { x.fillStyle = '#5a5550'; x.fillRect(0, 0, w, h); x.fillStyle = '#625d57'; for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) if ((i + j) % 2) x.fillRect(i * 32, j * 32, 32, 32) },
   boss: (x, w, h) => { x.fillStyle = '#7a1f2a'; x.fillRect(0, 0, w, h); x.strokeStyle = '#d8b24a'; x.lineWidth = 6; x.strokeRect(12, 12, w - 24, h - 24); x.fillStyle = 'rgba(0,0,0,.12)'; for (let i = 0; i < w; i += 8) x.fillRect(i, 0, 3, h) },
-  date: (x, w, h) => { x.fillStyle = '#efe4d2'; x.fillRect(0, 0, w, h); x.fillStyle = '#e2d2b8'; for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) if ((i + j) % 2) x.fillRect(i * 64, j * 64, 64, 64); x.fillStyle = '#d98aa6'; x.beginPath(); x.arc(128, 128, 30, 0, 7); x.fill() },
+  date: (x, w, h) => {
+    // 大理石の市松に金の目地
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) { x.fillStyle = (i + j) % 2 ? '#e9dfcf' : '#f6f1e8'; x.fillRect(i * 64, j * 64, 64, 64) }
+    marble(x, w, h, 10, 'rgba(140,128,112,.28)')
+    x.strokeStyle = '#d4a93a'; x.lineWidth = 3; for (let i = 0; i <= 4; i++) { x.beginPath(); x.moveTo(i * 64, 0); x.lineTo(i * 64, h); x.moveTo(0, i * 64); x.lineTo(w, i * 64); x.stroke() }
+  },
 }
 ;(() => {
   const len = CAR.zf - CAR.zb, zc = (CAR.zf + CAR.zb) / 2
   const fl = mesh(G.plane, floorM, 0, 0, zc, CAR.x * 2, len, 1, car); fl.rotation.x = -Math.PI / 2
   for (const s of [-1, 1]) box(0.06, CAR.h, len, wallM, s * (CAR.x + 0.03), CAR.h / 2, zc, car)
   box(CAR.x * 2 + 0.1, CAR.h, 0.06, backM, 0, CAR.h / 2, CAR.zb - 0.03, car)
-  box(CAR.x * 2 + 0.1, 0.06, len, M(0x6f7480), 0, CAR.h, zc, car)
+  box(CAR.x * 2 + 0.1, 0.06, len, ceilM, 0, CAR.h, zc, car)
   box(CAR.x * 2 + 0.1, CAR.h, 0.06, backM, 0, CAR.h / 2, CAR.zf + 0.03, car)
   // 天井の明かり
-  for (const z of [-1.2, 0.2, 1.6]) box(1.2, 0.02, 0.5, new THREE.MeshBasicMaterial({ color: 0xfff6e0 }), 0, CAR.h - 0.03, z, car)
-  // 手すり
-  for (const s of [-1, 1]) { box(0.05, 0.05, len - 0.6, railM, s * (CAR.x - 0.08), 0.92, zc, car); for (const z of [CAR.zb + 0.4, CAR.zf - 0.4]) box(0.03, 0.03, 0.1, railM, s * (CAR.x - 0.04), 0.92, z, car) }
-  box(CAR.x * 2 - 0.3, 0.05, 0.05, railM, 0, 0.92, CAR.zb + 0.08, car)
-  // 操作盤（右の壁）
-  box(0.03, 0.6, 0.24, M(0x2a2d38), CAR.x - 0.02, 1.2, 0.95, car)
-  for (let i = 0; i < 10; i++) mesh(G.cyl, new THREE.MeshBasicMaterial({ color: 0xe8e8e8 }), CAR.x - 0.04, 0.96 + Math.floor(i / 2) * 0.1, 0.9 + (i % 2) * 0.1, 0.022, 0.02, 0.022, car).rotation.z = Math.PI / 2
+  for (const z of [-1.2, 0.2, 1.6]) box(1.2, 0.02, 0.5, lightM, 0, CAR.h - 0.03, z, car)
+  // 手すり（丸いパイプと壁から出る腕）
+  for (const s of [-1, 1]) { mesh(G.cyl, railM, s * (CAR.x - 0.09), 0.92, zc, 0.024, len - 0.6, 0.024, car).rotation.x = Math.PI / 2; for (const z of [CAR.zb + 0.4, CAR.zf - 0.4]) mesh(G.cyl, railM, s * (CAR.x - 0.045), 0.92, z, 0.012, 0.09, 0.012, car).rotation.z = Math.PI / 2 }
+  mesh(G.cyl, railM, 0, 0.92, CAR.zb + 0.09, 0.024, CAR.x * 2 - 0.3, 0.024, car).rotation.z = Math.PI / 2
 })()
+// 行き先ボタンの盤と点検証のステッカー（左の壁の奥。縦画面でも見える位置。1枚の絵にまとめて軽く）
+const panelTex = canvasTex(136, 400, () => {})
+const panel = mesh(G.plane, new THREE.MeshBasicMaterial({ map: panelTex, transparent: true, alphaTest: 0.5 }), -CAR.x + 0.034, 1.25, -1.05, 0.3, 0.88, 1, car); panel.rotation.y = Math.PI / 2
+function paintPanel(id) {
+  const { ctx: x, c } = panelTex.userData, W = c.width, H = c.height, ph = H * 0.74
+  x.clearRect(0, 0, W, H)
+  const pl = { morning: ['#9aa1ab', '#e2e5ea'], boss: ['#a77f28', '#f0d27a'], date: ['#c99a2e', '#ffe7a0'] }[id]
+  const g = x.createLinearGradient(0, 0, W, 0); g.addColorStop(0, pl[0]); g.addColorStop(0.5, pl[1]); g.addColorStop(1, pl[0]); x.fillStyle = g; x.fillRect(4, 0, W - 8, ph)
+  x.strokeStyle = 'rgba(0,0,0,.35)'; x.lineWidth = 3; x.strokeRect(5, 1, W - 10, ph - 2)
+  const fl = { morning: [1, 18], boss: [20, 38], date: [40, 80] }[id], lit = { morning: [5, 12], boss: [30], date: [56, 72] }[id]
+  const nums = []; for (let k = 0; k < 18; k++) nums.push(Math.round(fl[0] + (fl[1] - fl[0]) * k / 17))
+  x.textAlign = 'center'; x.textBaseline = 'middle'; x.font = '900 15px sans-serif'
+  nums.forEach((nm, k) => {
+    const cx = W * (k % 2 ? 0.68 : 0.32), cy = ph * 0.9 - Math.floor(k / 2) * ph * 0.088, on = lit.includes(nm)
+    x.fillStyle = 'rgba(0,0,0,.35)'; x.beginPath(); x.arc(cx + 1, cy + 2, 15, 0, 7); x.fill()
+    x.fillStyle = on ? '#fff3c4' : '#f4f4f2'; x.beginPath(); x.arc(cx, cy, 14, 0, 7); x.fill()
+    x.strokeStyle = on ? '#ff9a2a' : '#7a7f88'; x.lineWidth = on ? 4 : 2; x.stroke()
+    x.fillStyle = on ? '#e05a00' : '#2a2d33'; x.fillText(String(nm), cx, cy + 1)
+  })
+  // 開・閉と非常ベル
+  const by = ph * 0.075
+  for (const [cx, t] of [[0.25, '◀▶'], [0.5, '▶◀']]) { x.fillStyle = '#f4f4f2'; x.beginPath(); x.arc(W * cx, by, 13, 0, 7); x.fill(); x.fillStyle = '#2a2d33'; x.font = '900 10px sans-serif'; x.fillText(t, W * cx, by + 1) }
+  x.fillStyle = '#ffcf1f'; x.beginPath(); x.arc(W * 0.77, by, 13, 0, 7); x.fill(); x.strokeStyle = '#2a2d33'; x.lineWidth = 2; x.stroke(); x.beginPath(); x.arc(W * 0.77, by + 3, 6, Math.PI, 0); x.stroke()
+  // 点検証のステッカー
+  const sy = H * 0.8, sh = H * 0.18
+  x.fillStyle = '#fbfbf6'; x.fillRect(14, sy, W - 28, sh); x.fillStyle = '#2f6fb5'; x.fillRect(14, sy, W - 28, sh * 0.28)
+  x.fillStyle = '#fff'; x.font = '900 13px sans-serif'; x.fillText('検査済証', W / 2, sy + sh * 0.15)
+  x.fillStyle = '#c0281e'; x.beginPath(); x.arc(W * 0.3, sy + sh * 0.64, sh * 0.2, 0, 7); x.fill(); x.fillStyle = '#fff'; x.font = '900 11px sans-serif'; x.fillText('合', W * 0.3, sy + sh * 0.65)
+  x.fillStyle = '#3a3d44'; x.font = '900 10px sans-serif'; x.textAlign = 'left'; x.fillText('定員 15名', W * 0.46, sy + sh * 0.52); x.fillText('1000kg', W * 0.46, sy + sh * 0.76); x.textAlign = 'center'
+  panelTex.needsUpdate = true
+}
+// 天井の監視カメラ（左奥の角。赤いランプが点滅）
+const camG = new THREE.Group(); camG.position.set(-1.02, CAR.h - 0.03, CAR.zb + 0.22); car.add(camG)
+mesh(G.cyl, M(0xe9e9e6, false), 0, -0.01, 0, 0.075, 0.03, 0.075, camG)
+mesh(G.sph, new THREE.MeshPhongMaterial({ color: 0x14161c, shininess: 140, specular: 0xffffff }), 0, -0.03, 0, 0.062, 0.055, 0.062, camG)
+const camLed = mesh(G.sph, new THREE.MeshBasicMaterial({ color: 0x3a0000 }), 0.03, -0.055, 0.045, 0.011, 0.011, 0.011, camG)
+const camGlow = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xff2a1a, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending })); camGlow.position.set(0.03, -0.055, 0.05); camGlow.scale.setScalar(0.09); camG.add(camGlow)
 // 奥の壁の鏡（毎フレーム描く。ドアと外が映る）
 const mirTex = canvasTex(512, 384, () => {})
 const mirror = mesh(G.plane, new THREE.MeshBasicMaterial({ map: mirTex }), 0, 1.45, CAR.zb + 0.005, 2.1, 1.55, 1, car)
 box(2.2, 0.06, 0.04, railM, 0, 2.25, CAR.zb + 0.02, car); box(2.2, 0.06, 0.04, railM, 0, 0.65, CAR.zb + 0.02, car)
 // 階数表示（鏡の上）
-const indTex = canvasTex(256, 80, () => {})
+const indTex = canvasTex(320, 96, () => {})
 const indM = new THREE.MeshBasicMaterial({ map: indTex })
-mesh(G.plane, indM, 0, 2.43, CAR.zb + 0.01, 0.62, 0.19, 1, car)
+mesh(G.plane, indM, 0, 2.43, CAR.zb + 0.012, 0.66, 0.2, 1, car)
+box(0.72, 0.25, 0.016, railM, 0, 2.43, CAR.zb, car)
 const lamp = mesh(G.sph, new THREE.MeshBasicMaterial({ color: 0x553311 }), 0.45, 2.43, CAR.zb + 0.02, 0.05, 0.05, 0.02, car)
 const halo = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xffb030, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending })); halo.position.set(0, 2.43, CAR.zb + 0.05); car.add(halo)
+// LED の数字が光る（にじみ＋芯＋ドットの格子）。上りの矢印は動いている間だけ流れる
+let IND_GRID = null, indKey = ''
 function drawInd(blink) {
   const { ctx: x, c } = indTex.userData, W = c.width, H = c.height
-  x.fillStyle = '#111'; x.fillRect(0, 0, W, H)
-  if (!blink) { x.fillStyle = '#ff9a2a'; x.font = '900 60px monospace'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(S.floor + 'F', 150, 44) }
-  x.fillStyle = S.stop ? '#555' : '#ff9a2a'; x.beginPath(); x.moveTo(36, 58); x.lineTo(60, 22); x.lineTo(84, 58); x.closePath(); x.fill()
+  const mv0 = !S.stop && S.mode === 'play', key = S.floor + '|' + blink + '|' + mv0 + '|' + (mv0 ? Math.floor((S.time * 40) % 72 / 6) : 0)
+  if (key === indKey) return; indKey = key
+  x.fillStyle = '#080606'; x.fillRect(0, 0, W, H)
+  x.textAlign = 'center'; x.textBaseline = 'middle'; x.font = '900 68px "Courier New", monospace'
+  if (!blink) { x.shadowColor = '#ff6a10'; x.shadowBlur = 18; x.fillStyle = '#ff8a2a'; x.fillText(S.floor + 'F', 196, 52); x.shadowBlur = 0; x.fillStyle = '#ffd08a'; x.fillText(S.floor + 'F', 196, 52) }
+  const mv = mv0, off = mv ? Math.floor((S.time * 40) % 72 / 6) * 6 : 12
+  x.save(); x.beginPath(); x.rect(30, 14, 64, H - 28); x.clip()
+  for (const o of [off - 72, off]) { const y = H - 20 - o; x.shadowColor = '#ff6a10'; x.shadowBlur = mv ? 12 : 0; x.fillStyle = mv ? '#ffb040' : '#5a3a20'; x.beginPath(); x.moveTo(40, y + 10); x.lineTo(62, y - 18); x.lineTo(84, y + 10); x.closePath(); x.fill() }
+  x.restore(); x.shadowBlur = 0
+  if (!IND_GRID) { IND_GRID = document.createElement('canvas'); IND_GRID.width = W; IND_GRID.height = H; const g = IND_GRID.getContext('2d'); g.fillStyle = 'rgba(0,0,0,.42)'; for (let i = 0; i < W; i += 4) g.fillRect(i, 0, 1, H); for (let j = 0; j < H; j += 4) g.fillRect(0, j, W, 1) }
+  x.drawImage(IND_GRID, 0, 0)
   indTex.needsUpdate = true
 }
 const HALL = { morning: ['#e9e3d6', '#2e7d5b'], boss: ['#7a1f2a', '#d8b24a'], date: ['#fff1c9', '#e0457b'] }
@@ -382,14 +579,36 @@ function paintMirror(c, W, H) {
   c.fillStyle = '#b9bfca'; c.fillRect(dx - o, dy, dw / 2, H - dy); c.fillRect(dx + dw / 2 + o, dy, dw / 2, H - dy)
   c.fillStyle = '#8e95a2'; c.fillRect(dx - o + dw / 2 - 3, dy, 3, H - dy); c.fillRect(dx + dw / 2 + o, dy, 3, H - dy)
   c.strokeStyle = '#6b707c'; c.lineWidth = 8; c.strokeRect(dx - 4, dy - 4, dw + 8, H)
+  mirrorPeople(c, W, H)
+  c.fillStyle = { morning: 'rgba(200,215,230,.16)', boss: 'rgba(120,80,40,.2)', date: 'rgba(255,220,150,.16)' }[id]; c.fillRect(0, 0, W, H)
   // 鏡の光
   c.fillStyle = 'rgba(255,255,255,.18)'; c.beginPath(); c.moveTo(W * 0.08, 0); c.lineTo(W * 0.2, 0); c.lineTo(W * 0.05, H); c.lineTo(0, H); c.closePath(); c.fill()
   c.beginPath(); c.moveTo(W * 0.86, 0); c.lineTo(W * 0.9, 0); c.lineTo(W * 0.78, H); c.lineTo(W * 0.74, H); c.closePath(); c.fill()
 }
+// 鏡に映る背中（自分と乗客）。カメラから見た鏡像の位置に、ぼんやりした頭と肩を描く（本物の反射の代わり）
+const _mv = new THREE.Vector3(), MIR = { zm: CAR.zb + 0.005, w: 2.1, h: 1.55, y0: 1.45 - 1.55 / 2 }
+function mirrorPeople(c, W, H) {
+  const C = camera.position, list = []
+  const add = (hx, hy, hz, shirt, hair, sc) => list.push({ hx, hy, hz, shirt, hair, sc })
+  P.head.getWorldPosition(_mv); add(_mv.x, _mv.y, _mv.z, 0x4f7fc4, 0x2b1d17, 1.15)
+  for (const p of S.pax) { if (!p.n || !p.n.g.visible) continue; const lk = LOOK[p.type]; npcHeadPos(p.n, _mv); add(_mv.x, _mv.y, _mv.z, lk.shirt, lk.hair, p.n.g.scale.y) }
+  list.sort((a, b) => b.hz - a.hz)
+  const hex = (n, a) => `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`
+  for (const o of list) {
+    const zv = 2 * MIR.zm - o.hz, k = (C.z - MIR.zm) / (C.z - zv)
+    const mx = C.x + (o.hx - C.x) * k, my = C.y + (o.hy - C.y) * k
+    const u = (mx + MIR.w / 2) / MIR.w * W, v = (1 - (my - MIR.y0) / MIR.h) * H, px = k / MIR.w * W * o.sc
+    // ぼかしの代わりに、少しずつ大きく薄い形を重ねる
+    for (const [g, a] of [[1.25, 0.12], [1.1, 0.16], [1, 0.22]]) {
+      c.fillStyle = hex(o.shirt, a); c.beginPath(); c.ellipse(u, v + px * 0.42, px * 0.36 * g, px * 0.2 * g, 0, Math.PI, 0); c.fillRect(u - px * 0.36 * g, v + px * 0.42, px * 0.72 * g, H); c.fill()
+      c.fillStyle = hex(o.hair, a * 1.3); c.beginPath(); c.ellipse(u, v, px * 0.15 * g, px * 0.17 * g, 0, 0, 7); c.fill()
+    }
+  }
+}
 const STAGE_LOOK = {
-  morning: { wall: 0xb6bcc8, back: 0x8b919e, rail: 0xc9ced8, bg: 0x2a2233 },
-  boss: { wall: 0x6b4630, back: 0x4f3322, rail: 0xd8b24a, bg: 0x241a14 },
-  date: { wall: 0xf1dfe2, back: 0xe7c9cf, rail: 0xd8c48a, bg: 0x33222a },
+  morning: { rail: 0xd3d8e0, bg: 0x2a2233, light: 0xf4f8ff, sky: 0xfff3e0, spec: 0x555555, shin: 60 },
+  boss: { rail: 0xd8b24a, bg: 0x241a14, light: 0xffe0b0, sky: 0xffe8cc, spec: 0x3a2a1a, shin: 30 },
+  date: { rail: 0xf2cf62, bg: 0x33222a, light: 0xfff2cc, sky: 0xfff2dc, spec: 0x777060, shin: 80 },
 }
 
 // ---------- プレイヤー（立っている主役）
@@ -457,7 +676,7 @@ const exTex = (ch, col) => canvasTex(128, 128, (c, w, h) => {
 })
 let TEX_EX = exTex('!', '#ff3d2e'), TEX_Q = exTex('?', '#ffd21f')
 const puffTex = canvasTex(64, 64, (c, w, h) => { const g = c.createRadialGradient(32, 32, 2, 32, 32, 30); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,0)'); c.fillStyle = g; c.fillRect(0, 0, w, h) })
-const stinkTex = canvasTex(64, 128, (c, w, h) => { c.strokeStyle = '#7da23a'; c.lineWidth = 7; c.lineCap = 'round'; c.beginPath(); for (let y = 120; y > 8; y -= 2) { const x = 32 + Math.sin(y / 14) * 14; y === 120 ? c.moveTo(x, y) : c.lineTo(x, y) } c.stroke() })
+const stinkTex = canvasTex(64, 128, (c, w, h) => { c.lineCap = 'round'; for (const [col, lw] of [['#4f7d24', 12], ['#b6da6e', 6]]) { c.strokeStyle = col; c.lineWidth = lw; c.beginPath(); for (let y = 118; y > 10; y -= 2) { const x = 32 + Math.sin(y / 14) * 14; y === 118 ? c.moveTo(x, y) : c.lineTo(x, y) } c.stroke() } })
 const sparkTex = canvasTex(64, 64, (c) => { c.fillStyle = '#fff'; c.beginPath(); for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4, r = i % 2 ? 8 : 30; c.lineTo(32 + Math.cos(a) * r, 32 + Math.sin(a) * r) } c.closePath(); c.fill() })
 const LOOK = {
   coworker: { shirt: 0x4a78b8, collar: 0xffffff, hair: 0x2b1d17, style: 'short', tie: 0x2a4a8a },
@@ -600,8 +819,11 @@ let cur = { id: 'morning' }
 
 function setLook(id) {
   cur = { id }
-  const lk = STAGE_LOOK[id]; wallM.color.setHex(lk.wall); backM.color.setHex(lk.back); railM.color.setHex(lk.rail); scene.background.setHex(lk.bg)
+  const lk = STAGE_LOOK[id]; railM.color.setHex(lk.rail); scene.background.setHex(lk.bg); lightM.color.setHex(lk.light); hemi.color.setHex(lk.sky)
+  wallM.specular.setHex(lk.spec); wallM.shininess = lk.shin
   FLOORS[id](floorTex.userData.ctx, 256, 256); floorTex.needsUpdate = true
+  for (const [t, f, back] of [[wallTex, WALLS[id], false], [backTex, WALLS[id], true], [ceilTex, CEILS[id]]]) { const { ctx, c } = t.userData; ctx.clearRect(0, 0, c.width, c.height); f(ctx, c.width, c.height, back); t.needsUpdate = true; t.userData.key = id }
+  paintPanel(id)
   for (const k in PROPS) PROPS[k].grp.visible = k === id
   resetProps()
 }
@@ -722,17 +944,35 @@ const flyers = []
 function fling(m, v, av) {
   m.updateWorldMatrix(true, false); scene.attach(m); flyers.push({ m, v, av, floor: 0.03, t: 0 })
 }
-const puffM = new THREE.MeshBasicMaterial({ color: 0xb9d27a, transparent: true, opacity: 0.55, depthWrite: false })
-const puffs = new THREE.InstancedMesh(G.sph, puffM, 40); puffs.count = 0; puffs.frustumCulled = false; scene.add(puffs)
-const puffP = []
+// 匂いのモヤ: 緑がかった漫画のもくもく（輪郭あり）。カメラに向けた板を1回の描画にまとめ、伸び縮みでうねらせる
+// 消える時は薄くせず、しぼんで消える（漫画っぽく、透けて人が見えにくくならない）
+const moyaTex = canvasTex(128, 128, (c) => {
+  const B = [[64, 70, 34], [38, 74, 24], [90, 74, 24], [50, 48, 24], [80, 46, 22], [64, 36, 20], [30, 56, 16], [100, 56, 16]]
+  c.fillStyle = '#4f7d24'; for (const [x, y, r] of B) { c.beginPath(); c.arc(x, y, r + 5, 0, 7); c.fill() }
+  c.fillStyle = '#b6da6e'; for (const [x, y, r] of B) { c.beginPath(); c.arc(x, y, r, 0, 7); c.fill() }
+  c.fillStyle = '#d6efa0'; for (const [x, y, r] of B.slice(3, 6)) { c.beginPath(); c.arc(x - r * 0.3, y - r * 0.3, r * 0.45, 0, 7); c.fill() }
+  c.strokeStyle = '#6f9a36'; c.lineWidth = 3.5; c.lineCap = 'round'; c.beginPath(); for (let a = 0; a < 9.5; a += 0.2) { const r = 3 + a * 2.2; c.lineTo(64 + Math.cos(a) * r, 66 + Math.sin(a) * r * 0.8) } c.stroke()
+})
+const MOYA_N = 56
+const moya = new THREE.InstancedMesh(G.plane, new THREE.MeshBasicMaterial({ map: moyaTex, transparent: true, opacity: 0.88, depthWrite: false, alphaTest: 0.04 }), MOYA_N)
+moya.count = 0; moya.frustumCulled = false; moya.renderOrder = 3; scene.add(moya)
+for (let i = 0; i < MOYA_N; i++) moya.setColorAt(i, new THREE.Color(0xffffff))
+// 匂いの線（〜〜）も同じやり方で1回の描画に
+const LINE_N = 8
+const lines = new THREE.InstancedMesh(G.plane, new THREE.MeshBasicMaterial({ map: stinkTex, transparent: true, opacity: 0.9, depthWrite: false, alphaTest: 0.05 }), LINE_N)
+lines.count = 0; lines.frustumCulled = false; lines.renderOrder = 3; scene.add(lines)
+const lineP = Array.from({ length: LINE_N }, (_, i) => ({ a: i / LINE_N * Math.PI * 2, ph: i * 0.37 % 1, r: 0.42 + (i % 3) * 0.14 }))
+const VR = Math.random // 見た目だけの乱数（遊びの乱数 S.rand は使わない）
+const moyaP = [], TINT = [0xffffff, 0xe6f7c8, 0xd4ecaa, 0xf2ffd8]
+function moyaAdd(o) { moyaP.push({ t: 0, rot: VR() * 6.28, vr: (VR() - 0.5) * 1.6, ph: VR() * 6.28, wob: 2 + VR() * 2.5, tint: TINT[Math.floor(VR() * TINT.length)], ...o }); while (moyaP.length > MOYA_N) moyaP.shift() }
 function doPuff(n, big) {
-  for (let i = 0; i < n; i++) puffP.push({ p: BUTT.clone().add(new THREE.Vector3((S.rand() - 0.5) * 0.1, (S.rand() - 0.5) * 0.08, 0)), v: new THREE.Vector3((S.rand() - 0.5) * (big ? 1.8 : 0.8), (S.rand() - 0.1) * 0.6, -0.4 - S.rand() * (big ? 1.6 : 0.6)), s: 0.04 + S.rand() * 0.05, g: big ? 1.9 : 1.2, t: 0, life: 1.4 + S.rand() * 0.8 })
-  while (puffP.length > 40) puffP.shift()
+  for (let i = 0; i < n * 7; i++) S.rand() // 以前の煙と同じ回数だけ乱数を進める（見た目の変更で遊びの乱数がずれないように）
+  // おしりから後ろへ、もくもくが勢いよく出る
+  const k = Math.ceil(n * 0.45)
+  // 主役の体に隠れないよう、左右にはみ出して広がる
+  for (let i = 0; i < k; i++) { const sd = i % 2 ? 1 : -1; moyaAdd({ p: buttPos().add(new THREE.Vector3(sd * 0.12, (VR() - 0.5) * 0.1, -0.05)), v: new THREE.Vector3(sd * (0.5 + VR() * (big ? 1.4 : 0.6)), (VR() * 0.7 + 0.15) * (big ? 1 : 0.6), -0.15 - VR() * (big ? 0.7 : 0.3)), s: (big ? 0.13 : 0.08) + VR() * 0.05, g: big ? 1.4 : 1.0, life: 1.3 + VR() * 0.9 }) }
 }
-// 匂いのもやもや（主役のまわりに漂う）
-const stinks = []
-for (let i = 0; i < 10; i++) { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: stinkTex, transparent: true, opacity: 0, depthWrite: false })); sp.scale.set(0.17, 0.34, 1); scene.add(sp); stinks.push({ sp, a: i / 10 * Math.PI * 2, ph: Math.random() * 3, r: 0.4 + Math.random() * 0.4 }) }
-const cloud = new THREE.Mesh(G.sph, new THREE.MeshBasicMaterial({ color: 0xa6c46a, transparent: true, opacity: 0, depthWrite: false })); cloud.position.set(0, 0.95, -0.4); scene.add(cloud)
+let ambT = 0
 // 犯人探しの視線（疑っている人の目から相手の顔へ、点が流れる）
 const dotTex = canvasTex(32, 32, (c) => { c.fillStyle = '#fff'; c.beginPath(); c.arc(16, 16, 12, 0, Math.PI * 2); c.fill(); c.lineWidth = 3; c.strokeStyle = '#1b1620'; c.stroke() })
 const gazeDots = []
@@ -855,7 +1095,7 @@ function startRun() {
   S.zone = 0; setStage(D.zones[0].id)
   S.evs = []; S.evLog = []; S.evN = 0; S.st = 0; S.planAt = D.run.firstAt; S.floorF = 1; S.floor = 1
   S.gauge = 0.3; S.strain = 0; S.flush = 0; S.snz = null; S.react = 0; S.relief = 0; S.shame = 0; S.punch = -1; S.level = 0; S.hop = 0; S.holding = false
-  S.smell = 0; S.sniff = 0; S.air = 0; S.hunt = null; S.zawaT = 0; Snd.tense = 0; S.door = 0; S.stop = null; S.lastBad = null; S.exitT = 0
+  S.smell = 0; S.sniff = 0; S.air = 0; S.hunt = null; S.zawaT = 0; Snd.tense = 0; Snd.sour = 0; S.door = 0; S.stop = null; S.lastBad = null; S.exitT = 0
   P.root.position.set(0, 0, 0); P.root.rotation.y = 0
   S.capT = -1; S.doCap = false; S.later = []
   spawnInitial()
@@ -913,8 +1153,8 @@ function fartImpact() {
   if (S.tut === 1 && f.id === 'bubo' && pts) { S.tut = 2; $('#hint').hidden = true }
   const T = TT(), bp = buttPos(), big = f.id === 'bubo', bad = rating === 'busted' || caught, label = f[S.lang === 'ja' ? 'oj' : 'oe']
   doPuff(big ? 26 : f.id === 'pu' ? 12 : 6, big); S.hop = big ? 1 : 0.4
-  if (f.id === 'suka') Snd.noise(Snd.now(), 0.9, 0.05, 1200, 'bandpass', null, 0.8)
-  else Snd.fart(big ? 1.1 : 0.6, big, big, !big)
+  // 音: バレたら狭い箱の残響、かき消せたら大きな音の裏でこもって小さく
+  Snd.fart(f.id, bad ? 'busted' : f.need < 0 ? 'plain' : rating === 'sus' ? 'half' : 'masked')
   if (bad) {
     loseLife(); Snd.duck(2.2)
     later(0.38, () => Snd.sfx('scratch')); later(0.65, () => Snd.sfx('gasp'))
@@ -982,6 +1222,10 @@ function updateSmell(dt) {
   else if (S.sniff < A.huntEnd) air = S.sniff < A.calm ? 0 : 1
   if (air !== S.air) setAir(air)
   Snd.tense = S.air
+  // ざわざわの間、BGM の音程と調子が少しずつずれていく（平常に戻れば戻る）
+  const sourT = S.air === 1 ? clamp(0.3 + 0.7 * (S.sniff - A.calm) / Math.max(0.05, A.hunt - A.calm), 0.25, 1) : S.air === 2 ? 1 : 0
+  Snd.sour = clamp(Snd.sour + (sourT - Snd.sour) * Math.min(1, dt * (sourT > Snd.sour ? 0.5 : 1.2)), 0, 1)
+  if (Snd.sour < 0.01 && !sourT) Snd.sour = 0
   if (S.air === 1) updateZawa(dt)
   if (S.air === 2) updateHunt(dt)
 }
@@ -1410,22 +1654,34 @@ function updateFlyers(dt) {
     if (f.m.position.y < f.floor) { f.m.position.y = f.floor; f.v.y *= -0.35; f.v.x *= 0.6; f.v.z *= 0.6; f.av.multiplyScalar(0.5); if (Math.abs(f.v.y) < 0.4) f.rest = true }
   }
   if (P.glasses.parent !== P.head && S.shame <= 0.15 && S.mode !== 'result') { const i = flyers.findIndex(f => f.m === P.glasses); if (i >= 0) flyers.splice(i, 1); reattachGlasses(); if (S.mode === 'play') Snd.sfx('pop') }
-  // ガスの煙
-  const m4 = new THREE.Matrix4(); let n = 0
-  for (let i = puffP.length - 1; i >= 0; i--) {
-    const p = puffP[i]; p.t += dt; if (p.t > p.life) { puffP.splice(i, 1); continue }
-    p.v.multiplyScalar(1 - 1.6 * dt); p.v.y += 0.25 * dt; p.p.addScaledVector(p.v, dt); p.s *= 1 + p.g * dt
-    const sc = p.s * Math.min(1, (p.life - p.t) / 0.5); m4.makeScale(sc, sc, sc); m4.setPosition(p.p); puffs.setMatrixAt(n++, m4)
+  // 匂いのモヤ: たまっている間は主役の後ろと横にもくもくが湧いて、うねりながら漂う
+  const sm = Math.min(1, S.smell), amb = moyaP.filter(p => p.amb).length, want = Math.round(sm * 16)
+  ambT -= dt
+  if (sm > 0.06 && amb < want && ambT <= 0) {
+    ambT = 0.12; const a = -0.42 * Math.PI + VR() * 1.84 * Math.PI, r = 0.3 + VR() * (0.25 + 0.45 * sm)
+    moyaAdd({ amb: true, p: new THREE.Vector3(P.root.position.x + Math.cos(a) * r, 0.35 + VR() * 0.55, P.root.position.z - 0.15 - Math.sin(a) * r * 0.8), v: new THREE.Vector3((VR() - 0.5) * 0.12, 0.12 + VR() * 0.12, -0.04 - VR() * 0.08), s: 0.14 + VR() * 0.14 * (0.6 + sm), g: 0.12, life: 2.4 + VR() * 1.6 })
   }
-  puffs.count = n; puffs.instanceMatrix.needsUpdate = true
-  // 匂いのもやもや
-  const sm = Math.min(1, S.smell)
-  for (const s of stinks) {
-    const a = s.a + S.time * 0.3, r = (s.r + 0.6 * sm), y = 0.6 + ((S.time * 0.25 + s.ph) % 1) * 1.3
-    s.sp.position.set(P.root.position.x + Math.cos(a) * r, y, P.root.position.z + Math.sin(a) * r * 0.8 - 0.3)
-    s.sp.material.opacity = clamp(sm * 1.1 - 0.1, 0, 0.85) * Math.sin(((S.time * 0.25 + s.ph) % 1) * Math.PI)
+  const q = new THREE.Quaternion(), qz = new THREE.Quaternion(), Z = new THREE.Vector3(0, 0, 1), sc = new THREE.Vector3(), m4 = new THREE.Matrix4(), col = new THREE.Color(); let n = 0
+  for (let i = moyaP.length - 1; i >= 0; i--) {
+    const p = moyaP[i]; p.t += dt
+    if (p.amb && sm < 0.04 && !p.fading && p.life - p.t > 0.45) { p.life = p.t + 0.45; p.fading = true }
+    if (p.t > p.life) { moyaP.splice(i, 1); continue }
+    p.v.multiplyScalar(1 - (p.amb ? 0.4 : 1.8) * dt); p.v.y += (p.amb ? 0.02 : 0.2) * dt; p.p.addScaledVector(p.v, dt); p.s *= 1 + p.g * dt; p.rot += p.vr * dt
+    const pop = Math.min(ease(p.t / 0.22), ease((p.life - p.t) / 0.45)), w = S.time * p.wob + p.ph
+    qz.setFromAxisAngle(Z, p.rot + Math.sin(w * 0.5) * 0.35); q.copy(camera.quaternion).multiply(qz)
+    sc.set(p.s * pop * (1 + 0.14 * Math.sin(w)), p.s * pop * (1 + 0.14 * Math.cos(w * 1.17)), 1)
+    m4.compose(p.p, q, sc); moya.setMatrixAt(n, m4); moya.setColorAt(n, col.setHex(p.tint)); n++
   }
-  cloud.scale.setScalar(0.5 + 0.9 * sm); cloud.material.opacity = 0.3 * sm; cloud.position.x = P.root.position.x
+  moya.count = n; moya.instanceMatrix.needsUpdate = true; if (moya.instanceColor) moya.instanceColor.needsUpdate = true
+  // 〜〜の線は匂いが濃い時だけ、ふくらんで上って消える
+  let ln = 0
+  if (sm > 0.25) for (const l of lineP) {
+    const k = (S.time * 0.3 + l.ph) % 1, a = l.a + S.time * 0.25, r = l.r + 0.35 * sm
+    const pop = Math.sin(k * Math.PI) * clamp((sm - 0.25) * 2.5, 0, 1); if (pop < 0.05) continue
+    _q.set(P.root.position.x + Math.cos(a) * r, 0.75 + k * 1.0, P.root.position.z - 0.25 - Math.abs(Math.sin(a)) * r * 0.7)
+    sc.set(0.13 * pop, 0.27 * pop, 1); m4.compose(_q, camera.quaternion, sc); lines.setMatrixAt(ln++, m4)
+  }
+  lines.count = ln; lines.instanceMatrix.needsUpdate = true
   // ドアからの風
   for (const w of winds) { w.z -= dt * 6; if (w.z < CAR.zb + 0.3) w.z = CAR.zf - 0.1; w.m.position.set(w.x, w.y, w.z); w.m.material.opacity = 0.5 * S.door }
 }
@@ -1467,6 +1723,9 @@ function updateScene(dt) {
   lamp.material.color.setHex(ch && (ch.ph === 'warn' || ch.ph === 'peak') ? 0xffa020 : 0x553311)
   const hk = ch && ch.ph === 'warn' ? ch.k : ch && ch.ph === 'peak' ? 1 : 0, hb = 0.5 + 0.5 * Math.sin(S.time * (8 + 22 * hk))
   if (!halo.material.map) { halo.material.map = puffTex; halo.material.needsUpdate = true } halo.material.opacity = hk ? (0.35 + 0.5 * hb) * Math.min(1, hk * 2) : 0; halo.scale.setScalar(0.5 + 1.1 * hk)
+  // 監視カメラの赤いランプ（1.2秒ごとに短く点く）
+  const led = (S.time % 1.2) < 0.18; camLed.material.color.setHex(led ? 0xff2a1a : 0x3a0000)
+  if (!camGlow.material.map) { camGlow.material.map = puffTex; camGlow.material.needsUpdate = true } camGlow.material.opacity = led ? 0.9 : 0
   car.rotation.z = sk && sk.ph === 'peak' ? Math.sin(S.time * 50) * 0.01 : 0
   winT += dt; indT += dt
   if (winT > 1 / 30) { winT = 0; const { ctx, c } = mirTex.userData; paintMirror(ctx, c.width, c.height); mirTex.needsUpdate = true }
@@ -1573,6 +1832,8 @@ window.hs = {
   S, D, Snd, P, camera, renderer, SLOTS, CAR, FT, lampOn: () => lamp.material.color.getHex() !== 0x553311, newEvent, RP,
   start: startRun, beginCount, fart: doFart, canFart, okNow, toResult, finishReveal, toTitle, drawCard, xPost, openX, useRuse, smellBust, calcResult, pinch, gazedNow, nextGaze,
   level: () => S.level, aboard, sniffMult, coverNow, diff,
+  interior: () => ({ id: cur.id, wall: wallTex.userData.key, rail: railM.color.getHex(), sky: hemi.color.getHex(), light: lightM.color.getHex() }),
+  moyaN: () => moya.count, lineN: () => lines.count, ledOn: () => camLed.material.color.getHex() !== 0x3a0000,
   cardDataURL: cardURL,
   setLang(l) { S.lang = l; applyLang() },
   openMore, closeMore,
