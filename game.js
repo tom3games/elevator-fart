@@ -929,8 +929,8 @@ function newEvent() {
 }
 function evLevel(e, st) {
   if (st < e.ws) { e.ph = 'idle'; e.k = 0; return 0 }
-  if (st < e.at) { e.ph = 'warn'; e.k = (st - e.ws) / e.warn; return 0.08 + 0.42 * e.k * e.k }
-  if (e.fake) { if (st < e.at + 0.4) { e.ph = 'fizzle'; e.k = (st - e.at) / 0.4; return 0.5 * (1 - e.k) } e.ph = 'done'; e.k = 1; return 0 }
+  if (st < e.at) { e.ph = 'warn'; e.k = (st - e.ws) / e.warn; return 0.08 + 0.17 * e.k * e.k }   // 予告中はまだ鳴っていない。ボタンは光らせない（本人「ぷっがなんでかよく光ってる」）
+  if (e.fake) { if (st < e.at + 0.4) { e.ph = 'fizzle'; e.k = (st - e.at) / 0.4; return 0.25 * (1 - e.k) } e.ph = 'done'; e.k = 1; return 0 }
   if (st < e.at + e.peak) { e.ph = 'peak'; e.k = (st - e.at) / e.peak; return 1 - 0.45 * Math.pow(Math.abs(2 * e.k - 1), 1.3) }
   if (st < e.at + e.peak + TAIL) { e.ph = 'tail'; e.k = (st - e.at - e.peak) / TAIL; return 0.55 * (1 - e.k) }
   e.ph = 'done'; e.k = 1; return 0
@@ -1388,7 +1388,7 @@ function updateGame(dt) {
       if (!e.peaked && S.st >= e.at) { e.peaked = true; if (e.fake) onFizzle(e); else onPeak(e) }
     }
     S.evs = S.evs.filter(e => e.ph !== 'done')
-    const hp = aboard().find(p => p.def.noise); if (hp) L = Math.max(L, hp.def.noise)
+    const hp = aboard().find(p => p.def.noise); if (hp) { const ph = (S.st + (hp.ph || 0)) % 8; const was = S.hpLoud; S.hpLoud = ph < 3; if (S.hpLoud && !was) Snd.event('music', 0.05, 3, false); L = Math.max(L, S.hpLoud ? hp.def.noise : 0.12) } else S.hpLoud = false   // 音もれはサビ（8秒に3秒）だけ大きい
     S.level = L
     for (const k of FIDS) S.cd[k] = Math.max(0, S.cd[k] - dt)
     // 主役の顔: 匂いがたまるほどそわそわ
@@ -1633,7 +1633,7 @@ function updateNPCs(dt) {
       if (ev.type === 'baby' && n.babyHead) n.babyHead.rotation.z = Math.sin(S.time * 30) * 0.3 * pk
       if (ev.type === 'bark' && n.dogG) { n.dogG.position.y = Math.abs(Math.sin(S.time * 18)) * 0.06 * pk; n.dogHead.rotation.x = -0.3 * pk }
     } else { if (n.babyHead) n.babyHead.rotation.z = Math.sin(n.phase) * 0.1; if (n.dogG) { n.dogG.position.y = 0; n.dogHead.rotation.x = 0 } }
-    if (n.type === 'headphone' && !ev) extraPitch = Math.sin(S.time * 9) * 0.08
+    if (n.type === 'headphone' && !ev) extraPitch = Math.sin(S.time * (S.hpLoud ? 16 : 9)) * (S.hpLoud ? 0.2 : 0.08)   // サビの間はノリノリ
     if (n.dogTail) n.dogTail.rotation.y = Math.sin(S.time * 14) * 0.6
     if (n.boxes) { const fall = ev && ev.type === 'cart' && ev.ph !== 'warn'; n.boxes.forEach((b, i) => { if (fall) { b.rotation.z = lerp(b.rotation.z, (i % 2 ? 1 : -1) * (0.4 + i * 0.3), 0.2); b.position.x = lerp(b.position.x, (i % 2 ? 1 : -1) * 0.12 * i, 0.2) } else if (ev && ev.ph === 'warn') b.rotation.z = Math.sin(S.time * 10 + i) * 0.08 * ev.k * i; else { b.rotation.z *= 0.9; b.position.x *= 0.9 } }) }
     if (n.aura) n.aura.forEach((sp, i) => { const a = n.phase * 0.8 + i; sp.position.set(Math.cos(a) * 0.32, n.seat + 0.2 + ((n.phase * 0.3 + i / 6) % 1) * 0.7, Math.sin(a) * 0.25); sp.material.opacity = 0.6 * Math.sin(((n.phase * 0.3 + i / 6) % 1) * Math.PI) })

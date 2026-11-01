@@ -112,7 +112,7 @@ await t('OGP 一式がある（og:image は公開URL・1200x630 の og.png）', 
     const img = new Image(); img.src = 'og.png'; await img.decode().catch(() => {})
     return { title: g('og:title'), desc: g('og:description'), image: g('og:image'), url: g('og:url'), type: g('og:type'), card: g('twitter:card'), w: img.naturalWidth, h: img.naturalHeight, dt: document.title }
   })
-  expect(/おなら/.test(r.title) && /点/.test(r.desc) && r.image === PUB + 'og.png?v=3' && r.url === PUB && r.type === 'website' && r.card === 'summary_large_image' && r.w === 1200 && r.h === 630, JSON.stringify(r)); return { title: r.title, w: r.w, h: r.h }
+  expect(/おなら/.test(r.title) && /点/.test(r.desc) && r.image === PUB + 'og.png?v=4' && r.url === PUB && r.type === 'website' && r.card === 'summary_large_image' && r.w === 1200 && r.h === 630, JSON.stringify(r)); return { title: r.title, w: r.w, h: r.h }
 })
 await t('古い仕様の文言が残っていない（くしゃみ・我慢ゲージ・誤魔化し4種・ステージ）', async () => {
   const r = await p.evaluate(() => {

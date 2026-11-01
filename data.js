@@ -101,7 +101,7 @@ window.HS = {
   // 1回ごとの判定。mask = かき消し度 0..1
   rateOf(m) { return m >= 0.9 ? 'perfect' : m >= 0.5 ? 'safe' : m > 0.12 ? 'sus' : 'busted' },
   ranks: [
-    { min: 180, col: '#e0a800', t: { ja: '伝説の尻忍（しりにん）', en: 'Legendary Butt Ninja' }, st: { ja: '免許\n皆伝', en: 'MAS\nTER' },
+    { min: 160, col: '#e0a800', t: { ja: '伝説の尻忍（しりにん）', en: 'Legendary Butt Ninja' }, st: { ja: '免許\n皆伝', en: 'MAS\nTER' },
       c: { ja: 'これだけ出して、だれも気づかない。あなたのお尻は国の宝です。', en: 'That much, and nobody noticed. Your butt is a national treasure.' } },
     { min: 130, col: '#16a394', t: { ja: '上忍 ── 無音無臭の達人', en: 'Jonin: Silent and Odorless' }, st: { ja: '合格', en: 'PASS' },
       c: { ja: 'ほぼ完璧。チャイムを味方につける才能があります。', en: 'Nearly flawless. The elevator chime is on your side.' } },
