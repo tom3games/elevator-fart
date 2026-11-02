@@ -30,78 +30,86 @@ S.rand = mulberry(S.seed)
 const TT = () => D.T[S.lang]
 const L2 = pair => pair[S.lang === 'ja' ? 0 : 1]
 
-// ---------- 音（WebAudio だけで鳴らす）
+// ---------- 音（録音素材を鳴らす。効果音も BGM も snd/ の mp3。合成で作らない）
+// 2026-11-02「AI特有のSE」と言われて、合成音（オシレーター）を全部やめた。出所は CREDITS.md
+// 素材の加工（速さ・こもり・箱の響き）だけ WebAudio でやる
+const SF = {
+  pu: ['pu1', 'pu2', 'pu3', 'pu4', 'pu5', 'pu6'], bubo: ['bubo1', 'bubo2', 'bubo3', 'bubo4', 'bubo5', 'bubo6'], suka: ['suka1', 'suka2'],
+  tummy: ['tummy1', 'tummy2'], cough: ['sick_07'], sniff: ['sick_02', 'sick_03', 'sick_04', 'sick_05'],
+  ding: ['ding'], door: ['door1', 'door2'], motor: ['motor'], rumble: ['rumble'], metal: ['metal1', 'metal2', 'metal3'], creak: ['creak1', 'creak2', 'creak3'],
+  crash: ['crash1', 'crash2', 'crash3'], wobble: ['wobble'], bark: ['bark1', 'bark2'], giggle: ['giggle'], laugh: ['laugh1'], baby: ['baby1', 'baby2', 'baby3'], leak: ['leak'],
+  ring: ['ring'], buzz: ['buzz'], heart: ['heart'], murmur: ['murmur'], cloth: ['cloth1', 'cloth2', 'cloth3'],
+  tap: ['tap'], tick: ['tick'], go: ['go'], scratch: ['scratch'], thud: ['thud'], clink: ['clink1', 'clink2'], step: ['step1', 'step2'], pop: ['pop1', 'pop2'],
+  stamp: ['stamp1', 'stamp2'], drum: ['drum'], boom: ['boom'], safe: ['safe'], perfect: ['perfect'], fanfare: ['fanfare'], wahwah: ['wahwah'],
+  bgm_title: ['bgm_title'], bgm_quiet: ['bgm_quiet'], bgm_happy: ['bgm_happy'],
+}
+const SND_V = 13
 const Snd = {
-  ctx: null, muted: store.get('hs.mute') === '1', next: 0, step: 0, track: null, want: null, switchAt: 0, played: {}, fartLog: [], sour: 0, bgmLog: [],
-  TEMPO: { title: 116, quiet: 126, happy: 132, sad: 70 },
+  ctx: null, muted: store.get('hs.mute') === '1', played: {}, fartLog: [], sour: 0, tense: 0, bgmLog: [], bufs: {}, raw: {}, last: {},
+  track: null, want: null, bgmSrc: null, bgmT: 0, mode: 'calm', rate: 1,
+  // TRACK: 曲ごとの素材と速さ。sad はエレベーターの曲を遅く・こもらせて流す（伸びたテープ）
+  TRACK: { title: { f: 'bgm_title', vol: 0.3 }, quiet: { f: 'bgm_quiet', vol: 0.34 }, happy: { f: 'bgm_happy', vol: 0.3 }, sad: { f: 'bgm_quiet', vol: 0.3, rate: 0.72, lp: 700 } },
+  url: n => `snd/${n}.mp3?v=${SND_V}`,
+  // 起動直後に先読み（デコードは初タップで AudioContext を作ってから）
+  prefetch() { for (const n of new Set(Object.values(SF).flat())) if (!this.raw[n]) this.raw[n] = fetch(this.url(n)).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null) },
   init() {
     if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return }
     const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return
     try {
       const c = this.ctx = new AC()
-      this.master = c.createGain(); this.master.gain.value = this.muted ? 0 : 0.8
+      this.master = c.createGain(); this.master.gain.value = this.muted ? 0 : 0.85
       this.an = c.createAnalyser(); this.an.fftSize = 2048; this.master.connect(this.an); this.an.connect(c.destination)
-      this.bgm = c.createGain(); this.bgm.gain.value = 0.0001; this.bgm.connect(this.master)
-      // 金属の箱の響き
-      this.echo = c.createGain(); const dl = c.createDelay(1); dl.delayTime.value = 0.09; const fb = c.createGain(); fb.gain.value = 0.5
-      const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1800; const wet = c.createGain(); wet.gain.value = 0.5
+      // BGM: 速さを揺らす・ローパスでこもらせる（ざわつくと狂う）
+      this.bgmLp = c.createBiquadFilter(); this.bgmLp.type = 'lowpass'; this.bgmLp.frequency.value = 16000
+      this.bgm = c.createGain(); this.bgm.gain.value = 0.0001; this.bgmLp.connect(this.bgm); this.bgm.connect(this.master)
+      // 環境音（かごのモーターと空調）。ずっと小さく鳴っている
+      this.bed = c.createGain(); this.bed.gain.value = 0.0001; const bl = c.createBiquadFilter(); bl.type = 'lowpass'; bl.frequency.value = 900; this.bed.connect(bl); bl.connect(this.master); this.bedIn = this.bed
+      // 金属の箱の短い反射（バレた時）
+      this.echo = c.createGain(); const dl = c.createDelay(1); dl.delayTime.value = 0.09; const fb = c.createGain(); fb.gain.value = 0.45
+      const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1800; const wet = c.createGain(); wet.gain.value = 0.45
       this.echo.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(lp); lp.connect(wet); wet.connect(this.master)
       // 狭い箱の残響（音でバレた時だけ通す）。金属の壁で短く跳ね返る
       const irL = Math.floor(c.sampleRate * 0.42), ir = c.createBuffer(2, irL, c.sampleRate)
       for (let ch = 0; ch < 2; ch++) { const b = ir.getChannelData(ch); for (let i = 0; i < irL; i++) { const tt = i / c.sampleRate; b[i] = (Math.random() * 2 - 1) * Math.exp(-tt / 0.075) * (1 + 0.6 * Math.sin(tt * 2 * Math.PI * 830)) } for (const [d, a] of [[0.006, 0.8], [0.011, -0.6], [0.017, 0.5], [0.023, -0.35]]) b[Math.floor(d * c.sampleRate) + ch * 7] += a }
-      this.box = c.createConvolver(); this.box.buffer = ir; const bw = c.createGain(); bw.gain.value = 0.85; this.box.connect(bw); bw.connect(this.master)
+      this.box = c.createConvolver(); this.box.buffer = ir; const bw = c.createGain(); bw.gain.value = 0.8; this.box.connect(bw); bw.connect(this.master)
       // かき消した時: こもらせて小さく（チャイム等の裏でかすかに）
       this.muf = c.createBiquadFilter(); this.muf.type = 'lowpass'; this.muf.frequency.value = 380; this.muf.Q.value = 0.5; const mg = c.createGain(); mg.gain.value = 0.32; this.muf.connect(mg); mg.connect(this.master)
       this.half = c.createBiquadFilter(); this.half.type = 'lowpass'; this.half.frequency.value = 1100; const hg = c.createGain(); hg.gain.value = 0.62; this.half.connect(hg); hg.connect(this.master)
-      const len = c.sampleRate * 2; this.noiseBuf = c.createBuffer(1, len, c.sampleRate)
-      const d = this.noiseBuf.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1
-      if (this.want) { const w = this.want; this.want = null; this.setTrack(w) }
+      // 小さいスピーカー（着信音・ヘッドホンの音もれ）
+      this.tiny = c.createBiquadFilter(); this.tiny.type = 'bandpass'; this.tiny.frequency.value = 2400; this.tiny.Q.value = 0.9; this.tiny.connect(this.master)
+      this.prefetch(); this.decodeAll()
     } catch (e) { this.ctx = null }
   },
-  setMute(m) { this.muted = m; store.set('hs.mute', m ? '1' : '0'); if (this.master) this.master.gain.value = m ? 0 : 0.8 },
+  decodeAll() {
+    for (const n of new Set(Object.values(SF).flat())) {
+      if (this.bufs[n]) continue; this.bufs[n] = 'loading'
+      this.raw[n].then(ab => ab && new Promise((ok, ng) => this.ctx.decodeAudioData(ab, ok, ng))).then(b => { if (b) this.bufs[n] = b; else delete this.bufs[n]; if (n === 'motor' && b) this.startBed() }).catch(() => { delete this.bufs[n] })
+    }
+  },
+  startBed() {
+    if (this.bedSrc || !this.ctx) return; const c = this.ctx, s = c.createBufferSource(); s.buffer = this.bufs.motor; s.loop = true; s.connect(this.bedIn); s.start(); this.bedSrc = s; this.mark('loop:motor')
+    this.bed.gain.setTargetAtTime(0.22, c.currentTime, 0.6)
+  },
+  setMute(m) { this.muted = m; store.set('hs.mute', m ? '1' : '0'); if (this.master) this.master.gain.value = m ? 0 : 0.85 },
   now() { return this.ctx ? this.ctx.currentTime : 0 },
   level() { if (!this.an) return 0; const d = new Float32Array(this.an.fftSize); this.an.getFloatTimeDomainData(d); let m = 0; for (const v of d) m = Math.max(m, Math.abs(v)); return m },
-  mtof: m => 440 * Math.pow(2, (m - 69) / 12),
   mark(n) { this.played[n] = (this.played[n] || 0) + 1 },
-  tone(f, t0, dur, type = 'square', vol = 0.2, dest, f2) {
-    if (!this.ctx) return; const c = this.ctx, o = c.createOscillator(), g = c.createGain()
-    o.type = type; o.frequency.setValueAtTime(f, t0); if (f2) o.frequency.exponentialRampToValueAtTime(f2, t0 + dur)
-    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), t0 + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur)
-    o.connect(g); g.connect(dest || this.master); o.start(t0); o.stop(t0 + dur + 0.02)
+  // 差分からランダムに1本（同じ物は続けない）
+  pick(kind) { const a = SF[kind]; if (!a) return null; if (a.length === 1) return a[0]; let n; do { n = a[Math.floor(Math.random() * a.length)] } while (n === this.last[kind]); this.last[kind] = n; return n },
+  // 素材を1回鳴らす。o: t（開始時刻）, rate, jit（速さの揺れ）, vol, dest, off（頭出し）, dur（途中で切る）, fade
+  play(kind, o = {}) {
+    if (!this.ctx) return null; const n = o.name || this.pick(kind), b = this.bufs[n]; if (!b || b === 'loading') return null
+    const c = this.ctx, s = c.createBufferSource(), g = c.createGain(), t = Math.max(c.currentTime, o.t || c.currentTime)
+    s.buffer = b; const j = o.jit == null ? 0.04 : o.jit; s.playbackRate.value = (o.rate || 1) * (1 + (Math.random() * 2 - 1) * j)
+    const v = o.vol == null ? 1 : o.vol
+    if (o.fade) { g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(v, t + o.fade) } else g.gain.setValueAtTime(v, t)
+    s.connect(g); g.connect(o.dest || this.master)
+    const off = Math.min(o.off || 0, Math.max(0, b.duration - 0.05))
+    if (o.dur) { const e = t + o.dur; g.gain.setValueAtTime(v, Math.max(t, e - 0.12)); g.gain.linearRampToValueAtTime(0.0001, e); s.start(t, off); s.stop(e + 0.02) } else s.start(t, off)
+    return { s, g, name: n, rate: s.playbackRate.value, len: (b.duration - off) / s.playbackRate.value }
   },
-  noise(t0, dur, vol, freq, type = 'highpass', dest, q) {
-    if (!this.ctx) return; const c = this.ctx, s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain()
-    s.buffer = this.noiseBuf; f.type = type; f.frequency.value = freq; if (q) f.Q.value = q
-    g.gain.setValueAtTime(Math.max(0.0002, vol), t0); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur)
-    s.connect(f); f.connect(g); g.connect(dest || this.master); s.start(t0, Math.random()); s.stop(t0 + dur + 0.02)
-  },
-  swell(t0, w, p, tail, vol, f1, f2, type = 'lowpass', q = 1) {
-    if (!this.ctx) return; const c = this.ctx, s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain()
-    s.buffer = this.noiseBuf; s.loop = true; f.type = type; f.Q.value = q
-    f.frequency.setValueAtTime(f1, t0); f.frequency.exponentialRampToValueAtTime(f2, t0 + w + 0.05)
-    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol * 0.28, t0 + w); g.gain.exponentialRampToValueAtTime(vol, t0 + w + 0.06)
-    g.gain.setValueAtTime(vol, t0 + w + p); g.gain.exponentialRampToValueAtTime(0.0001, t0 + w + p + tail)
-    s.connect(f); f.connect(g); g.connect(this.master); s.start(t0); s.stop(t0 + w + p + tail + 0.05)
-  },
-  // 声っぽい音（のこぎり波を母音のフィルタに通す）
-  voice(f, t0, dur, vol, formant = 900, dest, f2) {
-    if (!this.ctx) return; const c = this.ctx, o = c.createOscillator(), bp = c.createBiquadFilter(), g = c.createGain()
-    o.type = 'sawtooth'; o.frequency.setValueAtTime(f, t0); if (f2) o.frequency.exponentialRampToValueAtTime(f2, t0 + dur)
-    bp.type = 'bandpass'; bp.frequency.value = formant; bp.Q.value = 3
-    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0 + 0.02); g.gain.setValueAtTime(vol, t0 + dur * 0.7); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur)
-    o.connect(bp); bp.connect(g); g.connect(dest || this.master); o.start(t0); o.stop(t0 + dur + 0.02)
-  },
-  // 震える低音（おならの本体）。rate=ブルブルの速さ
-  rumble(t0, dur, vol, f1, f2, rate, dest) {
-    if (!this.ctx) return; const c = this.ctx, o = c.createOscillator(), lp = c.createBiquadFilter(), g = c.createGain(), am = c.createGain(), lfo = c.createOscillator(), lg = c.createGain()
-    o.type = 'sawtooth'; o.frequency.setValueAtTime(f1, t0); o.frequency.linearRampToValueAtTime(f1 * 1.25, t0 + dur * 0.3); o.frequency.exponentialRampToValueAtTime(f2, t0 + dur)
-    lp.type = 'lowpass'; lp.frequency.value = 520; lp.Q.value = 4
-    lfo.type = 'square'; lfo.frequency.setValueAtTime(rate, t0); lfo.frequency.linearRampToValueAtTime(rate * 0.6, t0 + dur); lg.gain.value = 0.5; am.gain.value = 0.5
-    lfo.connect(lg); lg.connect(am.gain)
-    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0 + 0.02); g.gain.setValueAtTime(vol, t0 + dur * 0.75); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur)
-    o.connect(lp); lp.connect(am); am.connect(g); g.connect(dest || this.master)
-    o.start(t0); lfo.start(t0); o.stop(t0 + dur + 0.05); lfo.stop(t0 + dur + 0.05)
-  },
+  // 1本を時間いっぱい繰り返す（鳴き声・着信音など）
+  rep(kind, t, dur, gap, o = {}) { let k = t; const end = t + dur; while (k < end) { const r = this.play(kind, { ...o, t: k }); k += (r ? Math.min(r.len, gap || r.len) : gap || 0.3) + (o.space || 0) } },
   setTrack(name) {
     if (this.want === name) return
     this.want = name; if (!this.ctx) return
@@ -113,244 +121,122 @@ const Snd = {
     if (!this.ctx) return; const now = this.ctx.currentTime, g = this.bgm.gain
     g.cancelScheduledValues(now); g.setValueAtTime(0.0001, now); g.setValueAtTime(0.0001, now + sec); g.linearRampToValueAtTime(this.vol(), now + sec + 0.6)
   },
-  vol() { return this.track === 'quiet' ? 0.32 : 0.26 },
-  tick() {
+  vol() { const T = this.TRACK[this.track]; return T ? T.vol : 0.3 },
+  // 犯人探しの心臓の音（BGM を止めて、これだけ）
+  heartOn(on) {
     if (!this.ctx) return; const c = this.ctx
-    if (this.switchAt && c.currentTime >= this.switchAt) {
-      this.track = this.want; this.step = 0; this.next = c.currentTime + 0.05; this.switchAt = 0
-      const g = this.bgm.gain; g.cancelScheduledValues(c.currentTime); g.setValueAtTime(0.0001, c.currentTime); g.linearRampToValueAtTime(this.vol(), c.currentTime + 0.35)
-      if (this.track) this.mark('bgm:' + this.track)
-    }
-    if (!this.track || this.switchAt) return
-    const spb = 60 / this.TEMPO[this.track] / 4
-    if (this.next < c.currentTime) this.next = c.currentTime + 0.05
-    while (this.next < c.currentTime + 0.25) { this['p_' + this.track](this.step, this.next); this.next += spb * this.drag(); this.step++ }
+    if (on && !this.heartSrc && this.bufs.heart && this.bufs.heart !== 'loading') { const s = c.createBufferSource(), g = c.createGain(); s.buffer = this.bufs.heart; s.loop = true; s.playbackRate.value = 1; g.gain.value = 0.0001; g.gain.setTargetAtTime(0.8, c.currentTime, 0.2); s.connect(g); g.connect(this.master); s.start(); this.heartSrc = { s, g } }
+    if (!on && this.heartSrc) { const h = this.heartSrc; h.g.gain.setTargetAtTime(0.0001, c.currentTime, 0.15); h.s.stop(c.currentTime + 0.8); this.heartSrc = null }
   },
-  pluck(n, t, dur = 0.09, vol = 0.07) { this.tone(this.mtof(n), t, dur, 'triangle', vol, this.bgm) },
-  // タイトル: 抜き足差し足のつま先ジャズ（Em）
-  p_title(i, t) {
-    const bar = Math.floor(i / 16) % 4, s = i % 16
-    const root = [40, 40, 45, 47][bar]
-    if (s % 4 === 0) this.tone(this.mtof(root), t, 0.12, 'triangle', 0.32, this.bgm)
-    if (s % 4 === 2) this.tone(this.mtof(root + 7), t, 0.08, 'triangle', 0.16, this.bgm)
-    if (s % 2 === 1) this.noise(t, 0.025, 0.03, 7000, 'highpass', this.bgm)
-    const m = [[64, -1, 67, -1, 69, -1, 70, 71, -1, -1, 64, -1, -1, -1, -1, -1], [64, -1, 67, -1, 69, -1, 70, 71, -1, -1, 76, -1, 75, -1, -1, -1],
-      [69, -1, 72, -1, 74, -1, 75, 76, -1, -1, 69, -1, -1, -1, -1, -1], [71, -1, -1, 70, -1, -1, 69, -1, 67, -1, 64, -1, 63, -1, 64, -1]][bar]
-    if (m[s] > 0) { this.pluck(m[s] + 12, t, 0.08, 0.06); this.tone(this.mtof(m[s]), t, 0.1, 'square', 0.018, this.bgm) }
-  },
-  // プレイ: エレベーターのボサノバ（ギターのコード・ベース・シェイカーとリム・ビブラフォン）
-  // 空気がざわつくほど sour（0..1）が上がり、音程が狂ってテンポがよれる。犯人探しで止まって心臓の音だけ
-  BOSSA: {
-    ch: [[57, 60, 64, 65], [57, 60, 64, 67], [55, 58, 62, 65], [58, 62, 64, 67], [55, 60, 64, 67], [57, 60, 63, 66], [55, 58, 62, 65], [58, 62, 64, 67]],
-    root: [41, 41, 43, 36, 45, 38, 43, 36],
-    gtr: [[0, 3, 6, 10, 13], [2, 6, 9, 12]],
-    mel: [[[0, 76, 4], [6, 74, 3], [10, 72, 6]], [[0, 69, 8], [12, 72, 4]], [[0, 74, 4], [6, 77, 3], [10, 74, 3], [14, 70, 2]], [[0, 72, 9], [10, 70, 2], [12, 69, 4]],
-      [[0, 72, 4], [6, 76, 3], [10, 79, 6]], [[0, 78, 4], [6, 75, 3], [10, 72, 6]], [[0, 70, 4], [6, 74, 3], [10, 77, 3], [14, 76, 2]], [[0, 74, 10], [12, 72, 4]]],
-  },
-  // テンポのよれ（sour が高いほど1拍ごとに伸び縮み）
-  drag() { const q = this.track === 'quiet' ? this.sour : 0; return q ? 1 + q * (0.07 * Math.sin(this.step * 0.37) + (Math.random() - 0.5) * 0.1) : 1 },
-  // 音程の狂い（セント）。全体のうねり＋音ごとのばらつき
-  det() { const q = this.sour; if (!q) return 0; const c = q * (Math.sin(this.step * 0.13) * 32 + (Math.random() - 0.5) * 46); this.detMax = Math.max(this.detMax || 0, Math.abs(c)); return c },
-  hz(m) { return this.mtof(m) * Math.pow(2, this.det() / 1200) },
-  // ガットギター風: のこぎり＋三角を、閉じていくローパスに通す
-  gtr(f, t, vol, dur = 0.55) {
-    this.mark('gtr'); if (!this.ctx) return; const c = this.ctx, o = c.createOscillator(), o2 = c.createOscillator(), lp = c.createBiquadFilter(), g = c.createGain()
-    o.type = 'sawtooth'; o2.type = 'triangle'; o.frequency.value = f; o2.frequency.value = f * 1.002
-    lp.type = 'lowpass'; lp.Q.value = 1.4; lp.frequency.setValueAtTime(2600, t); lp.frequency.exponentialRampToValueAtTime(520, t + 0.22)
-    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.005); g.gain.exponentialRampToValueAtTime(vol * 0.35, t + 0.12); g.gain.exponentialRampToValueAtTime(0.0001, t + dur)
-    o.connect(lp); o2.connect(lp); lp.connect(g); g.connect(this.bgm); o.start(t); o2.start(t); o.stop(t + dur + 0.02); o2.stop(t + dur + 0.02)
-  },
-  // ビブラフォン風: サイン＋4倍音、ゆるいトレモロ
-  vib(f, t, dur, vol) {
-    this.mark('vib'); if (!this.ctx) return; const c = this.ctx, o = c.createOscillator(), o2 = c.createOscillator(), g = c.createGain(), g2 = c.createGain(), tr = c.createOscillator(), tg = c.createGain()
-    o.frequency.value = f; o2.frequency.value = f * 4; g2.gain.value = 0.12; tr.frequency.value = 5.2; tg.gain.value = vol * 0.25
-    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.01); g.gain.exponentialRampToValueAtTime(vol * 0.5, t + 0.15); g.gain.exponentialRampToValueAtTime(0.0001, t + dur)
-    tr.connect(tg); tg.connect(g.gain); o.connect(g); o2.connect(g2); g2.connect(g); g.connect(this.bgm)
-    for (const x of [o, o2, tr]) { x.start(t); x.stop(t + dur + 0.02) }
-  },
-  p_quiet(i, t) {
-    const ten = this.tense || 0, q = this.sour || 0, s = i % 16, s32 = i % 32, bar = Math.floor(i / 16) % 8, B = this.BOSSA
-    let mode
-    if (ten >= 2) {
-      // 犯人探し: ボサノバは止まって心臓の音だけ（ドッ…クン）
-      mode = 'heart'
-      if (s === 0 || s === 3 || s === 8 || s === 11) { const k = s % 8 === 0; this.tone(k ? 62 : 52, t, 0.16, 'sine', k ? 0.5 : 0.36, this.bgm, 38); this.noise(t, 0.05, k ? 0.05 : 0.03, 180, 'lowpass', this.bgm) }
-    } else {
-      mode = q > 0.05 ? 'sour' : 'bossa'
-      // 調子がずれると、ところどころ音が抜ける
-      const drop = () => q > 0.05 && Math.random() < q * 0.3
-      const ch = B.ch[bar], root = B.root[bar]
-      // ベース（親指）: 1拍目に根音、3拍目に5度、その前に食い気味の音
-      if (s === 0) this.tone(this.hz(root), t, 0.42, 'sine', 0.24, this.bgm)
-      if (s === 6) this.tone(this.hz(root + 7), t, 0.18, 'sine', 0.12, this.bgm)
-      if (s === 8) this.tone(this.hz(root + 7), t, 0.4, 'sine', 0.2, this.bgm)
-      if (s === 14) this.tone(this.hz(root + (bar % 2 ? 0 : 12)), t, 0.16, 'sine', 0.1, this.bgm)
-      // ギターのコード（ボサノバの刻み・2小節で1周）。ジャラッと少しずらして鳴らす
-      if (B.gtr[Math.floor(s32 / 16)].includes(s) && !drop()) ch.forEach((n, k) => this.gtr(this.hz(n), t + k * 0.011, 0.028, 0.42 + (s === 0 ? 0.2 : 0)))
-      // パーカッション: シェイカー（16分）とリムショット
-      this.noise(t, 0.03, [0.016, 0.006, 0.01, 0.006][s % 4], 7200, 'highpass', this.bgm)
-      if ([0, 3, 6, 10, 13, 18, 22, 26].includes(s32)) { this.noise(t, 0.025, 0.05, 2200, 'bandpass', this.bgm, 4); this.tone(1700, t, 0.02, 'triangle', 0.02, this.bgm) }
-      if (s === 0 || s === 8) this.tone(95, t, 0.12, 'sine', 0.16, this.bgm, 50)
-      // メロディ（ビブラフォン）
-      const m = B.mel[bar].find(x => x[0] === s)
-      if (m && !drop()) this.vib(this.hz(m[1]), t, m[2] * 0.12 + 0.25, 0.05 * (1 - 0.4 * q))
-      // ざわざわ: 低い半音のうなりとひそひそ声
-      if (ten >= 1) {
-        if (s === 0) this.tone(this.mtof(root + 13), t, 1.1, 'sawtooth', 0.01, this.bgm)
-        if ((s === 5 || s === 13) && Math.random() < 0.6) this.noise(t, 0.12, 0.03, 3200, 'bandpass', this.bgm, 4)
+  // 今の BGM の状態: calm=ふつう / sour=ざわざわで速さと音程がよれる / heart=止まって心臓だけ
+  modeNow() { return this.track !== 'quiet' ? 'calm' : this.tense >= 2 ? 'heart' : this.sour > 0.05 ? 'sour' : 'calm' },
+  tick() {
+    if (!this.ctx) return; const c = this.ctx, now = c.currentTime
+    if (this.switchAt && (now >= this.switchAt || c.state !== 'running')) {   // 止まっている間（テスト・iOS の初回前）はすぐ切り替える
+      const T = this.TRACK[this.want]
+      if (!T || (this.bufs[T.f] && this.bufs[T.f] !== 'loading')) {
+        if (this.bgmSrc) { try { this.bgmSrc.stop() } catch (e) {} this.bgmSrc = null }
+        this.track = this.want; this.switchAt = 0
+        if (T) {
+          const s = c.createBufferSource(); s.buffer = this.bufs[T.f]; s.loop = true; s.playbackRate.value = T.rate || 1; s.connect(this.bgmLp); s.start(); this.bgmSrc = s
+          this.bgmLp.frequency.setValueAtTime(T.lp || 16000, now)
+          const g = this.bgm.gain; g.cancelScheduledValues(now); g.setValueAtTime(0.0001, now); g.linearRampToValueAtTime(T.vol, now + 0.35)
+          this.mark('bgm:' + this.track)
+        }
       }
     }
-    if (s === 0) { this.mark('q:' + mode); this.bgmLog.push(mode); if (this.bgmLog.length > 40) this.bgmLog.shift() }
-    return mode
-  },
-  p_happy(i, t) {
-    const bar = Math.floor(i / 16) % 4, s = i % 16, root = [48, 45, 41, 43][bar]
-    if (s === 0 || s === 8) this.tone(150, t, 0.16, 'sine', 0.6, this.bgm, 45)
-    if (s === 4 || s === 12) this.noise(t, 0.08, 0.14, 1500, 'bandpass', this.bgm)
-    if (s % 2 === 0) this.noise(t, 0.03, 0.04, 8000, 'highpass', this.bgm)
-    if ([0, 6, 10].includes(s)) this.tone(this.mtof(root - 12), t, 0.16, 'triangle', 0.35, this.bgm)
-    const m = [[72, 76, 79, 76], [72, 76, 81, 79], [77, 76, 74, 72], [74, 79, 77, 74]][bar]
-    if (s % 4 === 0) this.pluck(m[s / 4], t, 0.14, 0.07)
-  },
-  p_sad(i, t) {
-    const bar = Math.floor(i / 12) % 4, s = i % 12
-    const ch = [[57, 60, 64], [57, 62, 65], [56, 59, 64], [57, 60, 64]][bar], root = [33, 38, 40, 33][bar]
-    if (s === 0) this.tone(this.mtof(root), t, 0.8, 'sine', 0.3, this.bgm)
-    if (s === 4 || s === 8) for (const n of ch) this.tone(this.mtof(n), t, 0.4, 'triangle', 0.02, this.bgm)
-    const mel = [[76, 74, 72], [74, 72, 69], [71, 69, 68], [69, -1, -1]][bar]
-    if (s % 4 === 0) { const n = mel[s / 4]; if (n > 0) this.tone(this.mtof(n), t, 0.5, 'sine', 0.06, this.bgm) }
+    if (this.track === 'quiet' && this.bgmSrc && !this.switchAt) {
+      const m = this.modeNow(), q = this.sour, T = this.TRACK.quiet
+      // ざわつくほど 速さ（＝音程）がうねって、こもる。犯人探しで音楽は消えて心臓だけ
+      const w = performance.now() / 1000, wob = m === 'sour' ? q * (0.05 * Math.sin(w * 0.9) + 0.025 * Math.sin(w * 2.7)) : 0
+      this.rate = 1 + wob; this.bgmSrc.playbackRate.setTargetAtTime(this.rate, now, 0.08)
+      this.bgmLp.frequency.setTargetAtTime(m === 'sour' ? 16000 - 14000 * q : 16000, now, 0.2)
+      if (m !== this.mode) {
+        const g = this.bgm.gain; g.cancelScheduledValues(now); g.setValueAtTime(Math.max(0.0001, g.value), now)
+        g.linearRampToValueAtTime(m === 'heart' ? 0.0001 : T.vol, now + (m === 'heart' ? 0.4 : 1.2))
+        this.heartOn(m === 'heart')
+      }
+      this.mode = m
+    } else if (this.mode !== 'calm') { this.heartOn(false); this.mode = 'calm' }
+    if (now - this.bgmT > 2) { this.bgmT = now; this.bgmLog.push(this.mode); if (this.bgmLog.length > 40) this.bgmLog.shift(); this.mark('q:' + this.mode) }
   },
   // おなかが鳴る
-  growl(v = 1) { if (!this.ctx) return; const t = this.now(); this.mark('growl'); this.rumble(t, 0.5, 0.12 * v, 70, 110, 11); this.noise(t, 0.45, 0.06 * v, 260, 'lowpass') },
-  // おなら。層は 空気の破裂（ノイズのバースト）＋尻の共鳴（下がりながら震える低音）＋終わりのしぼみ（ぷすっ）
-  // kind: suka=すかしっぺ（ほぼ空気のスー…）/ pu=ぷっ / bubo=ブボボボッ（ぶつ切れの連打）
+  growl(v = 1) { this.mark('growl'); this.play('tummy', { vol: 0.6 * v, rate: 0.8, dest: this.half }) },
+  // おなら。録音の差分から選び、速さを毎回変える（直前と同じ素材は選ばない）
+  // kind: suka=すかしっぺ（空気が抜ける音）/ pu=ぷっ（短い）/ bubo=ブボボボッ（長い）
   // how: plain=ふつう / masked=かき消せた（こもって小さく）/ half=半分かき消せた / busted=バレた（狭い箱の残響）
-  // 長さ・音程・震え方・ぶつ切れの数は毎回ランダム。直前と似すぎたら振り直す
   fartRoll(kind) {
-    const R = Math.random, r = (a, b) => a + R() * (b - a)
-    if (kind === 'suka') return { kind, dur: r(0.7, 1.5), f0: r(520, 950), f1: r(260, 520), flap: r(4, 11), flapD: r(0.15, 0.45), chops: 1, vibR: 0, vibD: 0, drop: 0, tail: R() < 0.55 }
-    if (kind === 'pu') return { kind, dur: r(0.08, 0.24), f0: r(115, 215), drop: r(0.55, 0.85), vibR: r(7, 18), vibR2: r(5, 20), vibD: r(0.03, 0.11), flap: r(26, 48), flapD: r(0.35, 0.6), chops: R() < 0.3 ? 2 : 1, tail: R() < 0.7 }
-    return { kind, dur: r(0.75, 1.45), f0: r(56, 98), drop: r(0.42, 0.75), vibR: r(4, 13), vibR2: r(3, 17), vibD: r(0.05, 0.2), flap: r(17, 36), flapD: r(0.35, 0.65), chops: 3 + Math.floor(R() * 7), tail: R() < 0.85, long: R() < 0.5 }
+    const r = (a, b) => a + Math.random() * (b - a)
+    const p = { kind, name: this.pick(kind), rate: kind === 'suka' ? r(0.75, 1.2) : kind === 'pu' ? r(0.88, 1.18) : r(0.82, 1.1) }
+    const b = this.bufs[p.name]; p.dur = b && b !== 'loading' ? b.duration / p.rate : 0
+    return p
   },
   fart(kind = 'bubo', how = 'plain', v = 1) {
-    if (typeof kind !== 'string') kind = 'bubo'
-    let p = this.fartRoll(kind)
-    const last = this.fartLog[this.fartLog.length - 1]
-    for (let k = 0; k < 4 && last && last.kind === kind && last.chops === p.chops && Math.abs(last.f0 - p.f0) / p.f0 < 0.06 && Math.abs(last.dur - p.dur) / p.dur < 0.12; k++) p = this.fartRoll(kind)
+    if (typeof kind !== 'string' || !SF[kind]) kind = 'bubo'
+    const p = this.fartRoll(kind)
     p.how = how; this.fartLog.push(p); if (this.fartLog.length > 60) this.fartLog.shift()
     this.mark('fart'); this.mark('fart:' + kind); this.mark('fart:' + how); if (how === 'busted') this.mark('echo')
     if (!this.ctx) return p
-    const c = this.ctx, t = c.currentTime + 0.005, out = c.createGain(); out.gain.value = v
+    const c = this.ctx, out = c.createGain(); out.gain.value = v * (kind === 'suka' ? 0.55 : kind === 'pu' ? 0.8 : 1)
     if (how === 'masked') out.connect(this.muf)
     else if (how === 'half') out.connect(this.half)
     else { out.connect(this.master); if (how === 'busted') { out.connect(this.box); out.connect(this.echo) } }
-    const R = Math.random
-    if (kind === 'suka') {
-      // ほぼ空気: 帯域ノイズがゆっくり下がり、弱くゆれる
-      const s = c.createBufferSource(), bp = c.createBiquadFilter(), g = c.createGain(), am = c.createGain(), lfo = c.createOscillator(), lg = c.createGain()
-      s.buffer = this.noiseBuf; s.loop = true; bp.type = 'bandpass'; bp.Q.value = 1.6
-      bp.frequency.setValueAtTime(p.f0, t); bp.frequency.exponentialRampToValueAtTime(p.f1, t + p.dur)
-      lfo.frequency.setValueAtTime(p.flap, t); lfo.frequency.linearRampToValueAtTime(p.flap * 0.6, t + p.dur); lg.gain.value = p.flapD * 0.5; am.gain.value = 1 - p.flapD * 0.5
-      lfo.connect(lg); lg.connect(am.gain)
-      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.06, t + 0.12); g.gain.setValueAtTime(0.06, t + p.dur * 0.6); g.gain.exponentialRampToValueAtTime(0.0001, t + p.dur)
-      s.connect(bp); bp.connect(am); am.connect(g); g.connect(out); s.start(t, R()); lfo.start(t); s.stop(t + p.dur + 0.05); lfo.stop(t + p.dur + 0.05)
-      if (p.tail) this.noise(t + p.dur * 0.88, 0.07, 0.03, 1900, 'bandpass', out, 3)
-      return p
-    }
-    const big = kind === 'bubo'
-    // 空気の破裂
-    this.noise(t, 0.04, (big ? 0.5 : 0.28), 560 + R() * 300, 'bandpass', out, 0.9)
-    // ぶつ切れ: 長さをばらして並べる（最後だけ長く伸ばすこともある）
-    const n = p.chops, w = Array.from({ length: n }, (_, k) => (0.6 + R() * 0.8) * (p.long && k === n - 1 ? 2.2 : 1)), ws = w.reduce((a, b) => a + b, 0)
-    let k0 = t; p.segs = []
-    for (let k = 0; k < n; k++) {
-      const gap = n > 1 ? 0.008 + R() * 0.04 : 0, d = Math.max(0.04, p.dur * w[k] / ws - gap)
-      const f = p.f0 * (1 - p.drop * 0.6 * k / Math.max(1, n - 1)) * (0.92 + R() * 0.16)
-      const vol = (big ? 0.5 : 0.24) * (k === 0 ? 1 : 0.65 + R() * 0.35)
-      this.fartSeg(k0, d, f, f * (1 - p.drop * (0.4 + R() * 0.3)), p, vol, out); p.segs.push(+d.toFixed(3))
-      k0 += d + gap
-    }
-    // 終わりのしぼみ（ぷすっ）
-    if (p.tail) { this.noise(k0 - 0.01, 0.06, big ? 0.12 : 0.07, 1700 + R() * 900, 'bandpass', out, 3); this.tone(240 + R() * 120, k0 - 0.01, 0.06, 'sine', big ? 0.08 : 0.05, out, 600 + R() * 300) }
-    p.total = +(k0 - t).toFixed(3)
+    let dest = out
+    if (kind === 'suka') { const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 900 + Math.random() * 500; bp.Q.value = 0.8; bp.connect(out); dest = bp }
+    const r = this.play(kind, { name: p.name, rate: p.rate, jit: 0, dest, dur: kind === 'suka' ? Math.min(1.4, 0.7 + Math.random() * 0.7) : 0 })
+    p.total = r ? +r.len.toFixed(3) : 0
     return p
   },
-  // 尻の共鳴 1つ分: 下がる低音にビブラート（速さと深さが途中で変わる）、唇のはためき（AM）をかける
-  fartSeg(t, d, f1, f2, p, vol, dest) {
-    const c = this.ctx, o = c.createOscillator(), o2 = c.createOscillator(), vib = c.createOscillator(), vg = c.createGain(), flap = c.createOscillator(), fg = c.createGain(), am = c.createGain(), lp = c.createBiquadFilter(), g = c.createGain()
-    o.type = 'sawtooth'; o2.type = 'square'; const og2 = c.createGain(); og2.gain.value = 0.35
-    for (const x of [o, o2]) { x.frequency.setValueAtTime(f1 * 1.1, t); x.frequency.linearRampToValueAtTime(f1, t + d * 0.15); x.frequency.exponentialRampToValueAtTime(Math.max(25, f2), t + d) }
-    vib.frequency.setValueAtTime(p.vibR, t); vib.frequency.linearRampToValueAtTime(p.vibR2, t + d)
-    vg.gain.setValueAtTime(f1 * p.vibD * 0.4, t); vg.gain.linearRampToValueAtTime(f1 * p.vibD, t + d)
-    vib.connect(vg); vg.connect(o.frequency); vg.connect(o2.frequency)
-    flap.type = 'triangle'; flap.frequency.setValueAtTime(p.flap * (0.9 + Math.random() * 0.2), t); flap.frequency.linearRampToValueAtTime(p.flap * 0.65, t + d)
-    fg.gain.value = p.flapD * 0.5; am.gain.value = 1 - p.flapD * 0.5; flap.connect(fg); fg.connect(am.gain)
-    lp.type = 'lowpass'; lp.Q.value = 5; lp.frequency.setValueAtTime(Math.min(1400, f1 * 9), t); lp.frequency.exponentialRampToValueAtTime(Math.max(160, f1 * 3.2), t + d)
-    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.012); g.gain.setValueAtTime(vol, t + d * 0.7); g.gain.exponentialRampToValueAtTime(0.0001, t + d)
-    o.connect(lp); o2.connect(og2); og2.connect(lp); lp.connect(am); am.connect(g); g.connect(dest)
-    // 息のざらつき
-    this.noise(t, d, vol * 0.25, f1 * 3, 'bandpass', g, 1.2)
-    for (const x of [o, o2, vib, flap]) { x.start(t); x.stop(t + d + 0.03) }
-  },
-  cough() { if (!this.ctx) return; const t = this.now(); this.mark('cough'); for (const d of [0, 0.22]) { this.noise(t + d, 0.16, 0.6, 900, 'bandpass', null, 1.2); this.voice(170, t + d, 0.16, 0.25, 700, null, 120) } },
+  cough() { this.mark('cough'); this.play('cough', { vol: 0.8 }) },
   event(type, w, p, fake) {
-    if (!this.ctx) return; const t = this.now() + 0.01; this.mark('ev:' + type)
-    const R = Math.random
+    if (!this.ctx) return; const c = this.ctx, t = c.currentTime + 0.01; this.mark('ev:' + type)
     if (fake) { this.mark('fake:' + type); return this.fakeEvent(type, t, w) }
-    const s = t + w
+    const s = t + w, R = Math.random
     switch (type) {
       case 'chime': {
-        this.swell(t, w, 0.05, 0.3, 0.08, 120, 90, 'lowpass', 0.7) // 減速のうなり
-        this.tone(1318, s, 1.2, 'sine', 0.42); this.tone(1046, s + 0.42, 1.4, 'sine', 0.42); this.tone(2637, s, 0.6, 'sine', 0.06)
-        // アナウンス（声っぽく）
-        const vf = [[660, 0.12], [540, 0.12], [900, 0.14], [700, 0.18]]; let k = s + 0.25
-        for (const [f, d] of vf) { this.voice(230, k, d, 0.16, f); k += d + 0.02 }
-        this.noise(s + 0.5, 0.7, 0.12, 500, 'bandpass', null, 0.8) // ドア
+        this.play('motor', { t, vol: 0.5, rate: 0.85, fade: w, dur: w + 0.3, dest: this.half }) // 減速のうなり
+        this.play('ding', { t: s, vol: 1 }); this.play('door', { t: s + 0.45, vol: 0.7 })
         break
       }
       case 'phone': {
-        const n = Math.floor(w / 0.42)
-        for (let k = 0; k < n; k++) this.tone(110, t + k * 0.42, 0.24, 'square', 0.015 + 0.05 * k / n)
-        const mel = [84, 88, 91, 96, 91, 88]
-        for (let k = 0; s + k * 0.075 < s + p + 0.25; k++) this.tone(this.mtof(mel[k % mel.length]), s + k * 0.075, 0.07, 'square', 0.13)
+        this.rep('buzz', t, Math.max(0.1, w - 0.05), 0, { vol: 0.35, dest: this.half })
+        this.rep('ring', s, p + 0.25, 0, { vol: 0.8, dest: this.tiny, jit: 0 })
         break
       }
       case 'shake': {
-        for (let k = 0; k < 4; k++) this.voice(300 + k * 20, t + w * (0.2 + k * 0.2), 0.35, 0.03 + k * 0.012, 1200, null, 340 + k * 25) // きしみ
-        this.tone(70, s, 0.6, 'sine', 0.9, null, 35); this.noise(s, 0.5, 0.8, 900, 'lowpass')
-        for (let k = 0; k < 10; k++) this.tone(2200 + R() * 1800, s + R() * (p + 0.3), 0.12, 'triangle', 0.08) // 金属のガチャガチャ
+        for (let k = 0; k < 3; k++) this.play('creak', { t: t + w * (0.2 + k * 0.25), vol: 0.25 + k * 0.15 })
+        this.play('rumble', { t: s, vol: 1, rate: 1.3, dur: p + 0.6 }); this.play('boom', { t: s, vol: 0.9, rate: 0.7 })
+        for (let k = 0; k < 4; k++) this.play('metal', { t: s + R() * (p + 0.3), vol: 0.35 })
         break
       }
       case 'laugh': {
-        for (let k = 0; k < 3; k++) this.voice(140, t + w * 0.25 + k * 0.4, 0.22, 0.05, 600)
-        for (let k = 0; s + k * 0.15 < s + p + 0.35; k++) this.voice(k % 2 ? 175 : 160, s + k * 0.15, 0.12, 0.42, k % 2 ? 750 : 900, null, 130)
+        this.play('laugh', { t: t + w * 0.3, vol: 0.12, dest: this.muf, dur: w * 0.6 })
+        this.play('laugh', { t: s, vol: 1, off: 0.2, dur: p + 0.4, rate: 0.82, jit: 0.03 })
         break
       }
       case 'baby': {
-        for (let k = 0; k < 3; k++) this.voice(420, t + w * 0.3 + k * 0.45, 0.25, 0.04 + 0.02 * k, 1400, null, 380)
-        this.voice(520, s, p + 0.45, 0.45, 1500, null, 560); this.voice(1040, s, p + 0.4, 0.08, 2600, null, 1100)
+        for (let k = 0; k < 3; k++) this.play('baby', { t: t + w * 0.25 + k * 0.42, vol: 0.2 + 0.1 * k, rate: 1.0 })
+        this.rep('baby', s, p + 0.45, 0, { vol: 1, rate: 1.05, jit: 0.08 })
         break
       }
       case 'bark': {
-        this.voice(110, t + w * 0.3, w * 0.6, 0.12, 400, null, 95)
-        for (let k = 0; s + k * 0.17 < s + p + 0.2; k++) { this.noise(s + k * 0.17, 0.08, 0.4, 700, 'bandpass', null, 1.5); this.voice(420, s + k * 0.17, 0.1, 0.4, 900, null, 230) }
+        this.play('bark', { t: t + w * 0.3, vol: 0.18, rate: 0.5, dest: this.muf })
+        this.rep('bark', s, p + 0.2, 0.17, { vol: 1, jit: 0.07 })
         break
       }
       case 'cart': {
-        for (let k = 0; k < 10; k++) this.noise(t + (k / 10) * w, 0.05, 0.03 + 0.05 * k / 10, 1800, 'bandpass', null, 2)
-        this.noise(s, 0.8, 0.9, 700, 'lowpass'); this.tone(90, s, 0.5, 'sine', 0.7, null, 45)
-        for (let k = 0; k < 8; k++) { const d = R() * (p + 0.3); this.noise(s + d, 0.1, 0.5, 400 + R() * 600, 'bandpass', null, 2); this.tone(140 + R() * 80, s + d, 0.12, 'square', 0.12, null, 70) }
+        for (let k = 0; k < 4; k++) this.play('wobble', { t: t + (k / 4) * w, vol: 0.15 + 0.1 * k, rate: 1.4, dur: 0.3 })
+        this.play('crash', { t: s, vol: 1 }); this.play('crash', { t: s + 0.12, vol: 0.8 }); this.play('crash', { t: s + 0.3 + R() * 0.2, vol: 0.6 })
         break
       }
       case 'giggle': {
-        for (let k = 0; k < 4; k++) this.voice(380, t + w * 0.3 + k * 0.3, 0.07, 0.04, 1600)
-        for (let k = 0; s + k * 0.11 < s + p + 0.35; k++) this.voice(k % 2 ? 470 : 430, s + k * 0.11, 0.09, 0.32, 1700, null, 400)
+        this.play('giggle', { t: t + w * 0.3, vol: 0.1, dur: w * 0.6, dest: this.muf })
+        this.play('giggle', { t: s, vol: 1, off: 0.5, dur: p + 0.4 })
         break
       }
       case 'music': {
-        for (let k = 0; t + k * 0.125 < s; k++) this.noise(t + k * 0.125, 0.02, 0.02 + 0.05 * k * 0.125 / w, 7000, 'highpass')
-        for (let k = 0; s + k * 0.2 < s + p + 0.35; k++) { this.tone(130, s + k * 0.2, 0.18, 'sine', 0.95, null, 42); this.noise(s + k * 0.2 + 0.1, 0.04, 0.25, 6000, 'highpass') }
-        this.tone(110, s, p + 0.3, 'sawtooth', 0.12, null, 110)
+        this.play('leak', { t, vol: 0.15, off: R() * 20, dur: w + p + 0.35, dest: this.tiny, fade: Math.max(0.05, w) })
+        this.play('leak', { t: s, vol: 0.9, off: 5 + R() * 25, dur: p + 0.35, dest: this.tiny })
         break
       }
     }
@@ -358,43 +244,32 @@ const Snd = {
   // 予告だけして来ない音
   fakeEvent(type, t, w) {
     switch (type) {
-      case 'chime': this.swell(t, w, 0.05, 0.6, 0.06, 120, 140, 'lowpass', 0.7); this.tone(880, t + w, 0.15, 'sine', 0.05); break
-      case 'shake': for (let k = 0; k < 4; k++) this.voice(300 + k * 20, t + w * (0.2 + k * 0.2), 0.35, 0.03 + k * 0.012, 1200, null, 340 + k * 25); break
-      default: this.swell(t, w, 0.01, 0.4, 0.1, 400, 700, 'bandpass', 0.6)
+      case 'chime': this.play('motor', { t, vol: 0.4, rate: 0.85, fade: w, dur: w + 0.6, dest: this.half }); break
+      case 'shake': for (let k = 0; k < 3; k++) this.play('creak', { t: t + w * (0.2 + k * 0.25), vol: 0.25 + k * 0.15 }); break
+      case 'phone': this.rep('buzz', t, Math.max(0.1, w), 0, { vol: 0.3, dest: this.half }); break
+      case 'baby': this.play('baby', { t: t + w * 0.4, vol: 0.25 }); break
+      case 'bark': this.play('bark', { t: t + w * 0.3, vol: 0.18, rate: 0.5, dest: this.muf }); break
+      case 'cart': this.play('wobble', { t: t + w * 0.3, vol: 0.3, rate: 1.4, dur: 0.4 }); break
+      default: this.play('cloth', { t: t + w * 0.4, vol: 0.4 })
     }
+  },
+  // 決まった場面の音。鳴らす物が無い名前（目線・疑い）は数えるだけで鳴らさない（何にでも音を付けない）
+  SFX: {
+    tap: ['tap', 0.5], count: ['tick', 0.6], go: ['go', 0.6], scratch: ['scratch', 0.7], gasp: ['cloth', 0.9], gaze: ['cloth', 0.35],
+    sniff: ['sniff', 0.7], thud: ['thud', 0.8], clink: ['clink', 0.6], door: ['door', 0.7], ding: ['ding', 0.9], pop: ['pop', 0.6], stamp: ['stamp', 0.9],
+    boom: ['boom', 1], safe: ['safe', 0.45], perfect: ['perfect', 0.55], fanfare: ['fanfare', 0.7], wahwah: ['wahwah', 0.7],
   },
   sfx(name, v = 1) {
-    if (!this.ctx) return; const t = this.ctx.currentTime; this.mark(name)
-    switch (name) {
-      case 'tap': this.tone(880, t, 0.06, 'triangle', 0.12 * v); break
-      case 'count': this.tone(660, t, 0.08, 'sine', 0.12); break
-      case 'go': this.tone(1300, t, 0.3, 'sine', 0.14, null, 1900); break
-      case 'hum': this.tone(140, t, 0.45, 'triangle', 0.07, null, 175); this.tone(146, t, 0.45, 'sine', 0.05, null, 150); break
-      case 'scratch': this.tone(900, t, 0.14, 'sawtooth', 0.09, null, 180); this.noise(t, 0.14, 0.2, 1500, 'bandpass', null, 3); this.tone(250, t + 0.15, 0.12, 'sawtooth', 0.08, null, 800); break
-      case 'gasp': for (let k = 0; k < 7; k++) { const f = 380 + Math.random() * 320; this.tone(f, t + Math.random() * 0.1, 0.28, 'sawtooth', 0.025, null, f * 0.62) } this.noise(t + 0.1, 0.8, 0.12, 700, 'bandpass', null, 0.8); break
-      case 'whisper': for (let k = 0; k < 5; k++) this.noise(t + k * 0.11 + Math.random() * 0.05, 0.07, 0.05, 3400 + Math.random() * 1200, 'bandpass', null, 5); break
-      case 'gaze': this.tone(160, t, 0.35, 'triangle', 0.09, null, 120); this.tone(240, t + 0.05, 0.3, 'sine', 0.05, null, 170); break
-      case 'sniff': for (let k = 0; k < 3; k++) this.noise(t + k * 0.14, 0.09, 0.08, 2600, 'bandpass', null, 2); break
-      case 'thud': this.tone(95, t, 0.22, 'sine', 0.5, null, 45); this.noise(t, 0.12, 0.25, 500, 'lowpass'); break
-      case 'clink': this.tone(2600, t, 0.18, 'triangle', 0.1); this.tone(3900, t + 0.02, 0.12, 'sine', 0.06); break
-      case 'door': this.noise(t, 0.7, 0.1, 500, 'bandpass', null, 0.8); break
-      case 'ding': this.tone(1318, t, 0.9, 'sine', 0.2); this.tone(1046, t + 0.35, 1.1, 'sine', 0.2); break
-      case 'step': for (let k = 0; k < 4; k++) this.noise(t + k * 0.24, 0.05, 0.06, 900, 'bandpass', null, 2); break
-      case 'spray': for (const d of [0, 0.3]) this.noise(t + d, 0.25, 0.25, 5000, 'highpass'); break
-      case 'mash': for (let k = 0; k < 9; k++) this.tone(1500, t + k * 0.07, 0.03, 'square', 0.06); break
-      case 'stare': this.tone(200, t, 0.6, 'triangle', 0.08, null, 400); break
-      case 'safe': this.tone(1046, t, 0.12, 'triangle', 0.13); this.tone(1568, t + 0.08, 0.2, 'triangle', 0.12); break
-      case 'perfect': this.noise(t, 0.25, 0.06, 1400, 'bandpass', null, 2); this.tone(1318, t + 0.05, 0.1, 'triangle', 0.12); this.tone(1760, t + 0.12, 0.1, 'triangle', 0.12); this.tone(2637, t + 0.19, 0.25, 'triangle', 0.1); break
-      case 'sus': this.tone(500, t, 0.2, 'triangle', 0.1, null, 700); this.tone(700, t + 0.2, 0.25, 'triangle', 0.08, null, 560); break
-      case 'pop': this.tone(500, t, 0.08, 'sine', 0.15, null, 1200); break
-      case 'stamp': this.tone(120, t, 0.25, 'sine', 0.7, null, 45); this.noise(t, 0.15, 0.35, 900, 'lowpass'); break
-      case 'drum': for (let k = 0; k < 44; k++) this.noise(t + k * 0.036, 0.04, 0.05 + k * 0.004, 1800, 'bandpass', null, 0.9); break
-      case 'boom': this.tone(80, t, 0.7, 'sine', 0.6, null, 30); this.noise(t, 0.6, 0.25, 1500, 'lowpass'); break
-      case 'fanfare': [[72, 0], [76, 0.12], [79, 0.24], [84, 0.38]].forEach(([n, d]) => { this.tone(this.mtof(n), t + d, d > 0.3 ? 0.7 : 0.14, 'square', 0.07); this.tone(this.mtof(n - 12), t + d, d > 0.3 ? 0.7 : 0.14, 'triangle', 0.1) }); break
-      case 'wahwah': [[311, 0, 0.42], [294, 0.45, 0.42], [277, 0.9, 0.42], [262, 1.35, 1.1]].forEach(([f, d, l]) => { this.tone(f, t + d, l, 'sawtooth', 0.07, null, f * 0.96); this.tone(f / 2, t + d, l, 'triangle', 0.08) }); break
-    }
+    this.mark(name); if (!this.ctx) return; const t = this.ctx.currentTime
+    if (name === 'step') { for (let k = 0; k < 4; k++) this.play('step', { t: t + k * 0.24, vol: 0.5 }); return }
+    if (name === 'spray') { for (const d of [0, 0.3]) this.play('suka', { t: t + d, vol: 0.5, rate: 1.8, dur: 0.25 }); return }
+    if (name === 'whisper') { this.play('murmur', { vol: 0.5, off: Math.random() * 20, dur: 1.6, dest: this.muf, fade: 0.3 }); return }
+    if (name === 'drum') { this.rep('drum', t, 1.5, 0, { vol: 0.7, jit: 0.1 }); return }
+    if (name === 'mash') { for (let k = 0; k < 7; k++) this.play('tap', { t: t + k * 0.07, vol: 0.35, jit: 0.1 }); return }
+    const m = this.SFX[name]; if (m) this.play(m[0], { vol: m[1] * v })
   },
 }
+Snd.prefetch()
 
 // ---------- 3D の土台
 const canvas = $('#gl')
@@ -1089,7 +964,7 @@ const FT = Object.fromEntries(D.farts.map(f => [f.id, f]))
 const FIDS = D.farts.map(f => f.id)
 function startRun() {
   Snd.init(); S.rec = []; S.maxDb = 0; S.photo = false; S.result = null; S.smellBusts = 0; S.rode = []; S.ruseLog = []
-  S.ruseLeft = { ...D.ruses }; S.roof = false; S.score = 0; S.lives = D.run.lives; S.kickAt = -1; S.lifeT = -1; S.tut = 0
+  S.ruseLeft = { ...D.ruses }; S.roof = false; S.score = 0; S.lives = D.run.lives; S.kickAt = -1; S.lifeT = -1; S.tut = store.get('hs.tut') === '1' ? 2 : 0
   S.cd = Object.fromEntries(FIDS.map(k => [k, 0]))
   const pc = $('#rPhoto').getContext('2d'); pc.clearRect(0, 0, 256, 256)
   S.zone = 0; setStage(D.zones[0].id)
@@ -1150,7 +1025,7 @@ function fartImpact() {
   // 匂い（静かなおならほど強い。かき消しても匂いは出る）
   S.smell = Math.min(1.4, S.smell + f.smell); rec.smell = f.smell
   S.lastBad = (rating === 'sus' || rating === 'busted' || caught) ? { rec, t: S.st } : null
-  if (S.tut === 1 && f.id === 'bubo' && pts) { S.tut = 2; $('#hint').hidden = true }
+  if (S.tut === 1 && f.id === 'bubo' && pts) { S.tut = 2; store.set('hs.tut', '1'); $('#hint').hidden = true }
   const T = TT(), bp = buttPos(), big = f.id === 'bubo', bad = rating === 'busted' || caught, label = f[S.lang === 'ja' ? 'oj' : 'oe']
   doPuff(big ? 26 : f.id === 'pu' ? 12 : 6, big); S.hop = big ? 1 : 0.4
   // 音: バレたら狭い箱の残響、かき消せたら大きな音の裏でこもって小さく
@@ -1829,7 +1704,7 @@ loop()
 loadFonts('!?').then(() => { TEX_EX = exTex('!', '#ff3d2e'); TEX_Q = exTex('?', '#ffd21f') })
 
 window.hs = {
-  S, D, Snd, P, camera, renderer, SLOTS, CAR, FT, lampOn: () => lamp.material.color.getHex() !== 0x553311, newEvent, RP,
+  S, D, Snd, SF, P, camera, renderer, SLOTS, CAR, FT, lampOn: () => lamp.material.color.getHex() !== 0x553311, newEvent, RP,
   start: startRun, beginCount, fart: doFart, canFart, okNow, toResult, finishReveal, toTitle, drawCard, xPost, openX, useRuse, smellBust, calcResult, pinch, gazedNow, nextGaze,
   level: () => S.level, aboard, sniffMult, coverNow, diff,
   interior: () => ({ id: cur.id, wall: wallTex.userData.key, rail: railM.color.getHex(), sky: hemi.color.getHex(), light: lightM.color.getHex() }),

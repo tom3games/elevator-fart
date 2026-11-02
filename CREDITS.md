@@ -1,0 +1,72 @@
+# 音の出所（CREDITS）
+
+効果音・BGMは全部録音素材（2026-11-02 から）。CC BY の物は作者名の表示が必要。
+
+- snd/pu1.mp3: Yle Arkisto farts (Wikimedia Commons File:425594 ylearkisto farts-pieruja.wav) / Zache / Yle / CC BY 3.0 要クレジット
+- snd/pu2.mp3: Yle Arkisto farts (Wikimedia Commons File:425594 ylearkisto farts-pieruja.wav) / Zache / Yle / CC BY 3.0 要クレジット
+- snd/pu3.mp3: Yle Arkisto farts (Wikimedia Commons File:425594 ylearkisto farts-pieruja.wav) / Zache / Yle / CC BY 3.0 要クレジット
+- snd/pu4.mp3: Yle Arkisto farts (Wikimedia Commons File:425594 ylearkisto farts-pieruja.wav) / Zache / Yle / CC BY 3.0 要クレジット
+- snd/pu5.mp3: Gastric Distress (OpenGameArt) / LFA / CC0
+- snd/pu6.mp3: Yle Arkisto farts (Wikimedia Commons File:425594 ylearkisto farts-pieruja.wav) / Zache / Yle / CC BY 3.0 要クレジット
+- snd/bubo1.mp3: Gastric Distress (OpenGameArt) / LFA / CC0
+- snd/bubo2.mp3: Gastric Distress (OpenGameArt) / LFA / CC0
+- snd/bubo3.mp3: Wet fart tummy rumbles (Wikimedia Commons) / natalie / Public domain
+- snd/bubo4.mp3: Yle Arkisto farts (Wikimedia Commons File:425594 ylearkisto farts-pieruja.wav) / Zache / Yle / CC BY 3.0 要クレジット
+- snd/bubo5.mp3: Yle Arkisto farts (Wikimedia Commons File:425594 ylearkisto farts-pieruja.wav) / Zache / Yle / CC BY 3.0 要クレジット
+- snd/bubo6.mp3: Yle Arkisto farts (Wikimedia Commons File:425594 ylearkisto farts-pieruja.wav) / Zache / Yle / CC BY 3.0 要クレジット
+- snd/tummy1.mp3: Wet fart tummy rumbles (Wikimedia Commons) / natalie / Public domain
+- snd/tummy2.mp3: Wet fart tummy rumbles (Wikimedia Commons) / natalie / Public domain
+- snd/suka1.mp3: 100 CC0 SFX #2 / rubberduck / CC0
+- snd/suka2.mp3: 100 CC0 SFX #2 / rubberduck / CC0
+- snd/ding.mp3: Elevator ding / fvcalderan / CC0
+- snd/door1.mp3: Elevator_Door / PagDev / CC0
+- snd/door2.mp3: old elevator door / sinny / CC0
+- snd/motor.mp3: 100 CC0 SFX #2 / rubberduck / CC0
+- snd/rumble.mp3: 100 CC0 SFX #2 / rubberduck / CC0
+- snd/metal1.mp3: 100 CC0 SFX #2 / rubberduck / CC0
+- snd/metal2.mp3: 75 CC0 breaking / falling / hit sfx / rubberduck / CC0
+- snd/metal3.mp3: 75 CC0 breaking / falling / hit sfx / rubberduck / CC0
+- snd/creak1.mp3: 50 RPG sound effects / Kenney / CC0
+- snd/creak2.mp3: 50 RPG sound effects / Kenney / CC0
+- snd/creak3.mp3: 50 RPG sound effects / Kenney / CC0
+- snd/crash1.mp3: 75 CC0 breaking / falling / hit sfx / rubberduck / CC0
+- snd/crash2.mp3: 75 CC0 breaking / falling / hit sfx / rubberduck / CC0
+- snd/crash3.mp3: 75 CC0 breaking / falling / hit sfx / rubberduck / CC0
+- snd/wobble.mp3: 100 CC0 SFX / rubberduck / CC0
+- snd/bark1.mp3: File:Bark (avk).wav / Luce VERGNEAUX / CC0
+- snd/bark2.mp3: File:Sq-L1358454-bark-Arianit-Arianit.ogg / Arianit / CC0
+- snd/giggle.mp3: Group giggling / Nocturnal_Vanguard / CC0
+- snd/laugh1.mp3: File:Different-Types-of-Laughter-Modulate-Connectivity-within-Distinct-Parts-of-the-Laughter-Perception-pone.0063441.s010.oga / Wildgruber D, Szameitat D, Ethofer T, Bruck C, Alter K, Grod / CC BY 2.5
+- snd/ring.mp3, snd/buzz.mp3: 着信音とバイブ。ffmpeg で作成（電話の音はもともと電子音のため）
+- snd/sick_*.mp3: Sick noises / frosty ham / CC0（OpenGameArt）
+- snd/baby2.mp3: File:Emergence-of-Functional-Flexibility-in-Infant-Vocalizations-of-the-First-3-Months-Audio2.oga / Jhang Y, Oller D / CC BY 4.0
+- snd/leak.mp3: Funky Hip Hop Lofi Jam / omfgdude / CC0
+- snd/tap.mp3: Interface Sounds / Kenney / CC0
+- snd/tick.mp3: Interface Sounds / Kenney / CC0
+- snd/go.mp3: Interface Sounds / Kenney / CC0
+- snd/scratch.mp3: Interface Sounds / Kenney / CC0
+- snd/cloth1.mp3: 50 RPG sound effects / Kenney / CC0
+- snd/cloth2.mp3: 50 RPG sound effects / Kenney / CC0
+- snd/cloth3.mp3: 50 RPG sound effects / Kenney / CC0
+- snd/thud.mp3: 100 CC0 SFX #2 / rubberduck / CC0
+- snd/clink1.mp3: 100 CC0 SFX / rubberduck / CC0
+- snd/clink2.mp3: 100 CC0 SFX / rubberduck / CC0
+- snd/step1.mp3: 100 CC0 SFX #2 / rubberduck / CC0
+- snd/step2.mp3: 100 CC0 SFX #2 / rubberduck / CC0
+- snd/pop1.mp3: 3 Pop Sounds / wubitog / CC0
+- snd/pop2.mp3: 3 Pop Sounds / wubitog / CC0
+- snd/stamp1.mp3: Thwack Sounds / AntumDeluge / CC0
+- snd/stamp2.mp3: Thwack Sounds / AntumDeluge / CC0
+- snd/boom.mp3: 75 CC0 breaking / falling / hit sfx / rubberduck / CC0
+- snd/safe.mp3: 85 Short music jingles / Kenney / CC0
+- snd/perfect.mp3: 85 Short music jingles / Kenney / CC0
+- snd/fanfare.mp3: 85 Short music jingles / Kenney / CC0
+- snd/wahwah.mp3: 85 Short music jingles / Kenney / CC0
+- snd/bgm_quiet.mp3: Elevator / Guy G. Gamerson / CC0
+- snd/bgm_title.mp3: Elevator Music / Pro Sensory / CC0 (OpenGameArt)
+- snd/bgm_happy.mp3: Acoustic Comedy (comedy-funny-background-song) / Almitory / CC0 を選択 (OpenGameArt)
+- snd/baby1.mp3: File:Emergence-of-Functional-Flexibility-in-Infant-Vocalizations-of-the-First-3-Months-Audio1.oga / Jhang Y, Oller D / CC BY 4.0
+- snd/baby3.mp3: File:Emergence-of-Functional-Flexibility-in-Infant-Vocalizations-of-the-First-3-Months-Audio3.oga / Jhang Y, Oller D / CC BY 4.0
+- snd/murmur.mp3: Crowd Shouting/Speaking Ambience / StarNinjas / CC0
+- snd/drum.mp3: 54 Casino sound effects (cards, dice, chips) / Kenney / CC0
+- snd/heart.mp3: snd/thud.mp3（100 CC0 SFX #2 / rubberduck / CC0）を2つ重ねて心音にした
