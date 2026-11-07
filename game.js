@@ -976,6 +976,7 @@ function startRun() {
   spawnInitial()
   clearFx(); S.mode = 'intro'; S.modeT = 0; show('vPlay'); fillIntro(); $('#introCard').hidden = false; $('#count').hidden = true; $('#hint').hidden = true
   Snd.setTrack('quiet'); updateHud()
+  if (window.TM) TM.start()
 }
 function fillIntro() {
   const T = TT()
@@ -1313,6 +1314,7 @@ function calcResult() {
 function toResult() {
   S.mode = 'result'; S.resT = 0; S.revealStep = 0; clearFx(); S.later = []; S.stop = null; S.door = 0; $('#hint').hidden = true
   S.result = calcResult()
+  if (window.TM) TM.end(S.result.score, S.roof)
   S.mood = S.result.score >= D.ranks[2].min ? 'proud' : 'shame'
   setStage('date'); P.root.position.set(0, 0, 0); P.root.rotation.y = 0
   for (const t of ['partner', 'dog', 'nose']) addPax(t, false)
@@ -1403,9 +1405,9 @@ async function cardURL() { await loadFonts(cardText()); return drawCard().toData
 const PUBLIC_URL = 'https://tom3games.github.io/elevator-fart/'
 function shareText() { const r = S.result, T = TT(); return T.share.replace('{P}', r.score).replace('{F}', r.floor).replace('{N}', r.n).replace('{R}', r.rank.t[S.lang]).replace('{D}', (r.db || 0).toFixed(1)) }
 function xPost() { const text = shareText(); return { text, url: PUBLIC_URL, href: `https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(PUBLIC_URL)}` } }
-function openX() { if (!S.result) return; Snd.sfx('tap'); window.open(xPost().href, '_blank', 'noopener') }
+function openX() { if (!S.result) return; Snd.sfx('tap'); if (window.TM) TM.share('x'); window.open(xPost().href, '_blank', 'noopener') }
 async function saveCard() {
-  Snd.sfx('tap'); await loadFonts(cardText())
+  Snd.sfx('tap'); if (window.TM) TM.share('save'); await loadFonts(cardText())
   const c = drawCard(), blob = await new Promise(r => c.toBlob(r, 'image/png'))
   if (!blob) return
   try {
