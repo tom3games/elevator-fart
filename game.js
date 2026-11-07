@@ -1352,7 +1352,7 @@ function updateReveal(dt) {
   step(1, 2.6, () => { $('#rStamp').classList.add('on'); $('#rRank').classList.add('on'); $('#rFloor').classList.add('on'); Snd.sfx('stamp'); Snd.sfx(S.mood === 'proud' ? 'fanfare' : 'wahwah'); Snd.setTrack(S.mood === 'proud' ? 'happy' : 'sad'); S.shake = 0.03 })
   step(2, 3.2, () => { $('#rDb').classList.add('on'); Snd.sfx('boom') })
   step(3, 3.7, () => { $('#rStages').classList.add('on'); $('#rPax').classList.add('on'); Snd.sfx('tap') })
-  step(4, 4.1, () => { for (const id of ['#rMc', '#rBtns1', '#rBtns2', '#bMore']) $(id).classList.add('on') })
+  step(4, 4.1, () => { for (const id of ['#rMc', '#rBtns1', '#rBtns2', '#bMore', '#bSupport']) $(id).classList.add('on') })
 }
 function finishReveal() { if (S.mode !== 'result') return; S.resT = Math.max(S.resT, 4.2); updateReveal(0) }
 // ---------- 結果カード画像
@@ -1683,6 +1683,7 @@ function fillMore() {
 function openMore() { Snd.init(); Snd.sfx('tap'); fillMore(); $('#moreBox').hidden = false; $('#bMoreX').focus({ preventScroll: true }) }
 function closeMore() { if ($('#moreBox').hidden) return; $('#moreBox').hidden = true; Snd.sfx('tap') }
 $('#bMore').onclick = openMore
+$('#bSupport').addEventListener('click', () => { if (window.TM) TM.support() })
 $('#bMoreT').onclick = openMore
 $('#bMoreX').onclick = closeMore
 $('#moreBox').addEventListener('click', e => { if (e.target === e.currentTarget) closeMore() })
