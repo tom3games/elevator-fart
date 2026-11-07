@@ -1,5 +1,6 @@
 // 密室おなら選手権の検証。node verify.mjs（FPS=1 で GPU 描画の fps も測る）
 // 遊び: 1回の乗車で登り続け、おならボタン3種（すかしっぺ・ぷっ・ブボボボッ）で点を稼ぐ。3回バレたら降ろされる
+import './mute-auto.mjs'  // テスト中は絶対に音を出さない（playwright を無音に差し替え）
 import { chromium, webkit } from 'playwright'
 import { launch } from './_mute.mjs'
 import { spawn } from 'node:child_process'

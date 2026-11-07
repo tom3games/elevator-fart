@@ -1,5 +1,6 @@
 // SNS用サムネ og.png（1200x630）。node og.mjs
 // 満員エレベーターで暴発し、全員が振り向いて「くさっ！！誰！？」の瞬間を左に、右にタイトルと一言
+import './mute-auto.mjs'  // テスト中は絶対に音を出さない（playwright を無音に差し替え）
 import { chromium } from 'playwright'
 import { launch } from './_mute.mjs'
 import { spawn } from 'node:child_process'

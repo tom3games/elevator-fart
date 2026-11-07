@@ -1,4 +1,5 @@
 // 内装（1階・25階・50階）と匂いのモヤを縦横で撮る。node _interior.mjs [dir]
+import './mute-auto.mjs'  // テスト中は絶対に音を出さない（playwright を無音に差し替え）
 import { chromium } from 'playwright'
 import { launch } from './_mute.mjs'
 import { spawn } from 'node:child_process'

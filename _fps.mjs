@@ -1,4 +1,5 @@
 // fps とドローコールの目安。node _fps.mjs [port]（GPU 描画で実時間に6秒遊ばせる）
+import './mute-auto.mjs'  // テスト中は絶対に音を出さない（playwright を無音に差し替え）
 import { chromium } from 'playwright'
 import { launch } from './_mute.mjs'
 import { spawn } from 'node:child_process'
