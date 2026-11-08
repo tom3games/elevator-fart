@@ -2,6 +2,8 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
+<script id="ghMove">if(location.hostname==='tom3games.github.io'){location.replace('https://tom3games.com/play/elevator-fart/'+location.search+location.hash)}</script>
+<link rel="canonical" href="https://tom3games.com/play/elevator-fart/">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>密室おなら選手権 | ELEVATOR FART</title>
 <meta name="description" content="逃げ場のないエレベーターで、おならを出して点を稼ぐ。大きいおならほど高得点、チャイムや揺れの音にかぶせて出せ。匂いでもバレる。3回バレたら降ろされる。ブラウザで遊べる3Dバカゲー。">
@@ -9,12 +11,12 @@
 <meta property="og:type" content="website">
 <meta property="og:title" content="密室おなら選手権 | ELEVATOR FART">
 <meta property="og:description" content="エレベーターで、バレずにおならを出して点を稼げ。大きいほど高得点。匂いでもバレる。">
-<meta property="og:image" content="https://tom3games.github.io/elevator-fart/og.png?v=4">
-<meta property="og:url" content="https://tom3games.github.io/elevator-fart/">
+<meta property="og:image" content="https://tom3games.com/play/elevator-fart/og.png?v=4">
+<meta property="og:url" content="https://tom3games.com/play/elevator-fart/">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="密室おなら選手権 | ELEVATOR FART">
 <meta name="twitter:description" content="エレベーターで、バレずにおならを出して点を稼げ。大きいほど高得点。">
-<meta name="twitter:image" content="https://tom3games.github.io/elevator-fart/og.png?v=4">
+<meta name="twitter:image" content="https://tom3games.com/play/elevator-fart/og.png?v=4">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='6' y='4' width='52' height='56' rx='6' fill='%23b6bcc8' stroke='%231b1620' stroke-width='4'/%3E%3Cpath d='M32 8v52' stroke='%231b1620' stroke-width='3'/%3E%3Ccircle cx='22' cy='44' r='9' fill='%23b9d27a' stroke='%231b1620' stroke-width='3'/%3E%3Ccircle cx='38' cy='36' r='11' fill='%23b9d27a' stroke='%231b1620' stroke-width='3'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -238,6 +240,8 @@ html[lang=ja] .rank,html[lang=ja] .stamp,html[lang=ja] .verdict{font-family:"Zen
 .more svg{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
 /* 2026-11-08 本人「もう少しだけ目立つように。やりすぎない感じで」: 支援ボタンだけ金の細い縁と小さな贈り物の線画（共通 support.js と同じ見た目） */
 #bSupport{gap:7px;padding:0 16px;border:1.5px solid rgba(232,194,106,.9);background:rgba(28,22,14,.84);color:#FFE7A6;font-weight:700;box-shadow:0 2px 12px rgba(232,194,106,.22)}
+#bHome{align-self:center;padding:4px 12px;border-radius:99px;background:rgba(18,16,14,.5);color:#F4EEE2;font-size:12px;font-weight:600;text-decoration:underline;text-underline-offset:3px}
+#bHome.on{opacity:.92}
 #bSupport svg{width:16px;height:16px;stroke:#E8C26A;stroke-width:1.4}
 #moreBox{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));background:rgba(20,10,25,.7)}
 .moreP{width:min(560px,100%);max-height:100%;overflow:auto;background:var(--paper);color:var(--ink);border:3px solid var(--ink);border-radius:20px;box-shadow:0 7px 0 var(--ink);padding:8px 12px 12px;animation:popIn .2s cubic-bezier(.3,1.4,.5,1)}
@@ -336,6 +340,7 @@ html[lang=ja] .moreHd h2{font-family:"Zen Maru Gothic",var(--disp);font-weight:9
       <div class="row reveal" id="rBtns2"><button class="btn yel" id="bSave" type="button"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 19h14"/></svg><span data-t="save"></span></button><button class="btn xpost" id="bX" type="button"><svg class="xlogo" viewBox="0 0 24 24" aria-hidden="true"><path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"/></svg><span data-t="xPost"></span></button></div>
       <button class="more reveal" id="bMore" type="button"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7M18 14l3.5 3.5L18 21"/></svg><span data-t="more"></span></button>
       <a class="more reveal" id="bSupport" href="https://ofuse.me/ktomo_dev" target="_blank" rel="noopener" style="text-decoration:none"><svg viewBox="0 0 16 16" aria-hidden="true"><g fill="none" stroke="#E8C26A" stroke-width="1.4" stroke-linejoin="round"><rect x="2" y="6.5" width="12" height="7.5" rx="1"/><path d="M1.5 4.5h13v2h-13zM8 4.5v9.5"/><path d="M8 4.5C6.6 2 4.4 2.2 4.6 3.6 4.8 4.6 8 4.5 8 4.5zM8 4.5c1.4-2.5 3.6-2.3 3.4-.9C11.2 4.6 8 4.5 8 4.5z"/></g></svg><span data-t="support"></span></a>
+      <a class="reveal" id="bHome" href="https://tom3games.com/" target="_top" data-t="home"></a>
     </div>
   </div>
 </main>
@@ -370,8 +375,8 @@ html[lang=ja] .moreHd h2{font-family:"Zen Maru Gothic",var(--disp);font-weight:9
   },6000);
 })();
 </script>
-<script src="tm.js?v=2" data-game="elevator-fart"></script>
-<script src="data.js?v=15"></script>
-<script type="module" src="game.js?v=15"></script>
+<script src="tm.js?v=3" data-game="elevator-fart"></script>
+<script src="data.js?v=16"></script>
+<script type="module" src="game.js?v=16"></script>
 </body>
 </html>
