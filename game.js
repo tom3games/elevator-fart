@@ -1318,7 +1318,7 @@ function toResult() {
   S.mood = S.result.score >= D.ranks[2].min ? 'proud' : 'shame'
   setStage('date'); P.root.position.set(0, 0, 0); P.root.rotation.y = 0
   for (const t of ['partner', 'dog', 'nose']) addPax(t, false)
-  show('vResult'); fillResult(false)
+  fillResult(false); show('vResult')   // 中身を入れてから出す（出してから入れると画面がガタつく）
   Snd.setTrack(null); Snd.sfx('drum')
 }
 function reachText(db) { const m = Math.pow(10, (db - 50) / 20); return m >= 1000 ? (Math.round(m / 100) / 10) + 'km' : Math.max(1, Math.round(m)) + 'm' }
